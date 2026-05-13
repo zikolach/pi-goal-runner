@@ -21,6 +21,7 @@ export async function writeJsonAtomic(file: string, value: unknown): Promise<voi
   } finally {
     await handle.close();
   }
+  if (process.platform === "win32") await rm(file, { force: true });
   await rename(temp, file);
 }
 

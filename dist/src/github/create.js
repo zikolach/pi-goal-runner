@@ -8,13 +8,13 @@ export async function createGithubPrGoal(store, gh, repoOrUrl, prNumberOrUrl, op
     const prJson = await gh.run(["pr", "view", String(parsed.prNumber), "--repo", repoName, "--json", "url,headRefName,baseRefName,headRepositoryOwner"]);
     const pr = JSON.parse(prJson);
     const schedule = defaultSchedule();
-    if (options.quietWindowMs)
+    if (options.quietWindowMs !== undefined)
         schedule.quietWindow.durationMs = options.quietWindowMs;
-    if (options.initialBackoffMs) {
+    if (options.initialBackoffMs !== undefined) {
         schedule.backoff.initialMs = options.initialBackoffMs;
         schedule.backoff.currentMs = options.initialBackoffMs;
     }
-    if (options.maxBackoffMs)
+    if (options.maxBackoffMs !== undefined)
         schedule.backoff.maxMs = options.maxBackoffMs;
     const github = {
         repository: {

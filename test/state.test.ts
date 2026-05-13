@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { appendGoalEvent, parseWorkerEventLine } from "../src/state/events.js";
 import { acquireGoalLock } from "../src/state/lock.js";
+import { writeJsonAtomic } from "../src/state/json.js";
 import { sanitizeGoalId } from "../src/state/paths.js";
 import { applyNoActionPolicy, defaultSchedule, increaseBackoff, quietWindowExpired } from "../src/policy.js";
 import { redactText } from "../src/redaction.js";
@@ -23,6 +24,18 @@ test("creates, lists, gets, and updates goals", async () => {
     assert.equal((await t.store.list()).length, 1);
     await t.store.setState("goal-1", "paused");
     assert.equal((await t.store.get("goal-1")).state, "paused");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("atomic json writes can replace an existing file", async () => {
+  const t = await tempStore();
+  try {
+    const file = path.join(t.dir, "state.json");
+    await writeJsonAtomic(file, { value: 1 });
+    await writeJsonAtomic(file, { value: 2 });
+    assert.deepEqual(JSON.parse(await readFile(file, "utf8")), { value: 2 });
   } finally {
     await t.cleanup();
   }
@@ -75,6 +88,18 @@ test("per-goal locks exclude concurrent holders", async () => {
     assert.equal(second, undefined);
     await first.release();
     assert.ok(await acquireGoalLock(t.store.paths, "goal-1"));
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("stale locks recover when owner metadata is missing", async () => {
+  const t = await tempStore();
+  try {
+    await mkdir(t.store.paths.lockDir("goal-1"), { recursive: true });
+    const recovered = await acquireGoalLock(t.store.paths, "goal-1", 0);
+    assert.ok(recovered);
+    await recovered.release();
   } finally {
     await t.cleanup();
   }

@@ -81,6 +81,37 @@ test("worker stdout events are serialized in emission order", async () => {
   }
 });
 
+test("worker exit without terminal event records failure", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "console.log(JSON.stringify({type:'progress', message:'only progress'}));"],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "failed");
+    assert.match(updated.latestProgress ?? "", /without emitting a terminal event/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("stale completion does not advance handled timestamps", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }], github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] } });
+    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "stale", summary: "stale", addressedThreadIds: ["t1"] });
+    assert.equal((await t.store.get("g")).github?.lastHandledAt, undefined);
+    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:01Z", status: "success", summary: "done", addressedThreadIds: ["t1"] });
+    const updated = await t.store.get("g");
+    assert.equal(updated.github?.lastHandledAt, "2026-01-01T00:00:01Z");
+    assert.deepEqual(updated.github?.handledThreadIds, ["t1"]);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("notification failure is nonfatal", async () => {
   const t = await tempStore();
   try {

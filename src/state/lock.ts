@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { StatePaths } from "./paths.js";
 import { ensureDir } from "./json.js";
@@ -46,9 +46,18 @@ async function isStale(lockPath: string, staleMs: number): Promise<boolean> {
   try {
     const text = await readFile(path.join(lockPath, "owner.json"), "utf8");
     const parsed = JSON.parse(text) as { createdAt?: string };
-    if (!parsed.createdAt) return false;
+    if (!parsed.createdAt) return isLockDirStale(lockPath, staleMs);
     return Date.now() - new Date(parsed.createdAt).getTime() > staleMs;
   } catch {
-    return false;
+    return isLockDirStale(lockPath, staleMs);
+  }
+}
+
+async function isLockDirStale(lockPath: string, staleMs: number): Promise<boolean> {
+  try {
+    const info = await stat(lockPath);
+    return Date.now() - info.mtimeMs > staleMs;
+  } catch {
+    return true;
   }
 }

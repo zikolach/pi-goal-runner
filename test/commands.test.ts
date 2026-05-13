@@ -59,3 +59,16 @@ test("watch-pr validates quiet window option before creating goals", async () =>
     await t.cleanup();
   }
 });
+
+test("watch-pr preserves zero quiet window option", async () => {
+  const t = await tempStore();
+  try {
+    const gh = { run: async (args: string[]) => (args[0] === "auth" ? "" : JSON.stringify({ url: "https://github.com/owner/repo/pull/1", headRefName: "branch", baseRefName: "main" })) };
+    const output = await handleGoalCommand(t.store, "watch-pr owner/repo 1 --quiet-ms 0", { gh });
+    const goalId = output.match(/Created (\S+):/)?.[1];
+    assert.ok(goalId);
+    assert.equal((await t.store.get(goalId)).schedule.quietWindow.durationMs, 0);
+  } finally {
+    await t.cleanup();
+  }
+});

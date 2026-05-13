@@ -16,8 +16,11 @@ export async function launchWorker(store, goal, prompt, options = {}) {
         let stdoutBuffer = "";
         let stderr = "";
         let timedOut = false;
+        let terminalEventSeen = false;
         let ingestionQueue = Promise.resolve();
         const enqueueEvent = (event, forcedStatus) => {
+            if (event.type === "complete" || event.type === "failure" || event.type === "decision")
+                terminalEventSeen = true;
             ingestionQueue = ingestionQueue.then(() => ingestWorkerEvent(store, goal.id, runId, event, forcedStatus));
             ingestionQueue.catch(() => undefined);
             return ingestionQueue;
@@ -42,7 +45,7 @@ export async function launchWorker(store, goal, prompt, options = {}) {
             stderr += chunk;
             stderr = stderr.slice(-4_000);
         });
-        child.on("close", (code) => {
+        child.on("close", (code, signal) => {
             clearTimeout(timer);
             void (async () => {
                 if (stdoutBuffer.trim())
@@ -53,7 +56,12 @@ export async function launchWorker(store, goal, prompt, options = {}) {
                     await enqueueEvent(event, "timeout");
                 }
                 else if (code !== 0) {
-                    const event = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker exited ${code}: ${redactText(stderr, 2_000)}`, retryable: true };
+                    const exitReason = code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`;
+                    const event = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker exited with ${exitReason}: ${redactText(stderr, 2_000)}`, retryable: true };
+                    await enqueueEvent(event, "failed");
+                }
+                else if (!terminalEventSeen) {
+                    const event = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: "Worker exited successfully without emitting a terminal event", retryable: true };
                     await enqueueEvent(event, "failed");
                 }
                 resolve(await store.get(goal.id));
@@ -83,11 +91,20 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
         if (event.type === "decision")
             return { ...addPendingDecision({ ...goal, runHistory }, event.decision), latestProgress: event.decision.prompt };
         if (event.type === "complete")
-            return { ...goal, state: event.status === "quiet" ? "completed" : "active", latestProgress: event.summary, lastRunSummary: event.summary, runHistory, github: goal.github ? { ...goal.github, lastHandledAt: event.timestamp, handledThreadIds: [...new Set([...goal.github.handledThreadIds, ...(event.addressedThreadIds ?? [])])] } : goal.github };
+            return { ...goal, state: event.status === "quiet" ? "completed" : "active", latestProgress: event.summary, lastRunSummary: event.summary, runHistory, github: updateGithubHandledState(goal, event) };
         if (event.type === "failure")
             return { ...goal, state: "failed", latestProgress: event.message, runHistory };
         return { ...goal, runHistory, latestProgress: event.message };
     });
+}
+function updateGithubHandledState(goal, event) {
+    if (!goal.github || event.status !== "success")
+        return goal.github;
+    return {
+        ...goal.github,
+        lastHandledAt: event.timestamp,
+        handledThreadIds: [...new Set([...goal.github.handledThreadIds, ...(event.addressedThreadIds ?? [])])],
+    };
 }
 function workerArgsFromEnv() {
     const configured = process.env.PI_GOAL_WORKER_ARGS;

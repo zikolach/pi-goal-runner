@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { ensureDir } from "./json.js";
 export async function acquireGoalLock(paths, goalId, staleMs = 30 * 60_000) {
@@ -41,11 +41,20 @@ async function isStale(lockPath, staleMs) {
         const text = await readFile(path.join(lockPath, "owner.json"), "utf8");
         const parsed = JSON.parse(text);
         if (!parsed.createdAt)
-            return false;
+            return isLockDirStale(lockPath, staleMs);
         return Date.now() - new Date(parsed.createdAt).getTime() > staleMs;
     }
     catch {
-        return false;
+        return isLockDirStale(lockPath, staleMs);
+    }
+}
+async function isLockDirStale(lockPath, staleMs) {
+    try {
+        const info = await stat(lockPath);
+        return Date.now() - info.mtimeMs > staleMs;
+    }
+    catch {
+        return true;
     }
 }
 //# sourceMappingURL=lock.js.map
