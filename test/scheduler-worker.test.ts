@@ -97,6 +97,22 @@ test("worker exit without terminal event records failure", async () => {
   }
 });
 
+test("worker spawn errors record failure and resolve", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: path.join(t.store.paths.root, "missing-worker-binary"),
+      args: [],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "failed");
+    assert.match(updated.latestProgress ?? "", /failed to start/i);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("stale completion does not advance handled timestamps", async () => {
   const t = await tempStore();
   try {

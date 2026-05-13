@@ -28,6 +28,7 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
     let stderr = "";
     let timedOut = false;
     let terminalEventSeen = false;
+    let settled = false;
     let ingestionQueue: Promise<void> = Promise.resolve();
     const enqueueEvent = (event: GoalEvent, forcedStatus?: RunSummary["status"]) => {
       if (event.type === "complete" || event.type === "failure" || event.type === "decision") terminalEventSeen = true;
@@ -54,8 +55,24 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
       stderr += chunk;
       stderr = stderr.slice(-4_000);
     });
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      void (async () => {
+        await ingestionQueue;
+        const event: FailureEvent = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker failed to start: ${redactText(error.message, 2_000)}`, retryable: true };
+        await enqueueEvent(event, "failed");
+        resolve(await store.get(goal.id));
+      })().catch(async (updateError) => {
+        await store.update(goal.id, (current) => ({ ...current, state: "failed", latestProgress: redactText(updateError instanceof Error ? updateError.message : String(updateError), 1_000) }));
+        resolve(await store.get(goal.id));
+      });
+    });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
+      if (settled) return;
+      settled = true;
       void (async () => {
         if (stdoutBuffer.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, stdoutBuffer));
         await ingestionQueue;

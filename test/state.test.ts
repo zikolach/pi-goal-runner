@@ -78,6 +78,13 @@ test("redaction does not leak regex offsets for token patterns", () => {
   assert.equal(redactText("API_TOKEN=secret-value"), "API_TOKEN=[REDACTED]");
 });
 
+test("redaction tolerates values that JSON cannot serialize", () => {
+  const circular: Record<string, unknown> = {};
+  circular.self = circular;
+  assert.equal(redactText(1n), "1");
+  assert.equal(redactText(circular), "[object Object]");
+});
+
 test("per-goal locks exclude concurrent holders", async () => {
   const t = await tempStore();
   try {

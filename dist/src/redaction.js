@@ -10,7 +10,7 @@ const PREFIXED_SECRET_PATTERNS = [
 ];
 export const DEFAULT_MAX_TEXT = 4_000;
 export function redactText(input, maxLength = DEFAULT_MAX_TEXT) {
-    let text = typeof input === "string" ? input : JSON.stringify(input ?? "");
+    let text = stringifyForRedaction(input);
     for (const pattern of SECRET_PATTERNS) {
         text = text.replace(pattern, "[REDACTED]");
     }
@@ -20,6 +20,23 @@ export function redactText(input, maxLength = DEFAULT_MAX_TEXT) {
     if (text.length > maxLength)
         return `${text.slice(0, maxLength)}… [truncated]`;
     return text;
+}
+function stringifyForRedaction(input) {
+    if (typeof input === "string")
+        return input;
+    if (input === undefined || input === null)
+        return "";
+    try {
+        return JSON.stringify(input);
+    }
+    catch {
+        try {
+            return String(input);
+        }
+        catch {
+            return "[unserializable]";
+        }
+    }
 }
 export function redactObject(value, maxStringLength = DEFAULT_MAX_TEXT) {
     if (typeof value === "string")

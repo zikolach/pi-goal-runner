@@ -64,7 +64,7 @@ PI_GOAL_WORKER_ARGS="--print"
 
 ## Notifications and PiRelay hook
 
-By default notifications are no-op. To integrate with PiRelay or another messenger bridge, provide a command that reads JSON from `PI_GOAL_NOTIFICATION` or stdin:
+By default notifications are no-op. To integrate with PiRelay or another messenger bridge, provide a command that reads JSON from the `PI_GOAL_NOTIFICATION` environment variable:
 
 ```bash
 PI_GOAL_NOTIFY_COMMAND=/path/to/notify-script
