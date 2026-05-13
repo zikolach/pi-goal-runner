@@ -1,0 +1,7 @@
+node_modules/
+coverage/
+dist/test/
+.pi/npm/
+.pi/git/
+*.log
+.DS_Store

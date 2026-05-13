@@ -1,0 +1,41 @@
+{
+  "name": "pi-goal-runner",
+  "version": "0.1.0",
+  "description": "Durable recurring automation goals for Pi, starting with GitHub PR review loops.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "pi-goal-runner": "./dist/src/cli.js"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "automation",
+    "github"
+  ],
+  "files": [
+    "dist/src",
+    "src",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test \"dist/test/**/*.test.js\"",
+    "test:unit": "npm run test",
+    "test:integration": "npm run test",
+    "goal": "node dist/src/cli.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
