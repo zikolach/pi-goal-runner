@@ -32,6 +32,15 @@ export function createStatePaths(root = defaultStateRoot()): StatePaths {
 }
 
 export function sanitizeGoalId(goalId: string): string {
-  if (!/^[a-zA-Z0-9._-]+$/.test(goalId)) throw new Error(`Invalid goal id: ${goalId}`);
+  if (
+    goalId === "." ||
+    goalId === ".." ||
+    goalId.includes("..") ||
+    path.isAbsolute(goalId) ||
+    path.basename(goalId) !== goalId ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(goalId)
+  ) {
+    throw new Error(`Invalid goal id: ${goalId}`);
+  }
   return goalId;
 }

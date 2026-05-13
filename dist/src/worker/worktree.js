@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readdir, rm, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import { redactText } from "../redaction.js";
 const execFileAsync = promisify(execFile);
@@ -30,6 +30,7 @@ export async function createOrReuseWorktree(paths, repoPath, worktreePath, branc
     catch {
         // Create below.
     }
+    await prepareWorktreePath(worktreePath);
     const args = ["-C", repoPath, "worktree", "add", worktreePath];
     if (branch)
         args.push(branch);
@@ -39,6 +40,22 @@ export async function createOrReuseWorktree(paths, repoPath, worktreePath, branc
     catch (error) {
         const err = error;
         throw new Error(`Could not create worktree: ${redactText(err.stderr || err.stdout || err.message, 1_000)}`);
+    }
+}
+async function prepareWorktreePath(worktreePath) {
+    try {
+        const info = await stat(worktreePath);
+        if (!info.isDirectory())
+            throw new Error(`Worktree path exists and is not a directory: ${worktreePath}`);
+        const entries = await readdir(worktreePath);
+        if (entries.length > 0)
+            throw new Error(`Worktree path exists but is not a valid git worktree and is not empty: ${worktreePath}`);
+        await rm(worktreePath, { recursive: true, force: true });
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return;
+        throw error;
     }
 }
 //# sourceMappingURL=worktree.js.map

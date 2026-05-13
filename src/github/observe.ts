@@ -11,17 +11,35 @@ export async function observeGithubPr(gh: GhExecutor, config: GithubPrGoalConfig
     "--repo",
     repo,
     "--json",
-    "url,headRefName,headRefOid,reviewThreads,statusCheckRollup",
+    "url,headRefName,headRefOid,statusCheckRollup",
   ]);
   const pr = JSON.parse(prJson) as Record<string, unknown>;
+  const threads = await fetchReviewThreads(gh, config);
   return {
     observedAt: new Date().toISOString(),
     prUrl: typeof pr.url === "string" ? pr.url : config.prUrl,
     headBranch: typeof pr.headRefName === "string" ? pr.headRefName : config.repository.branch,
     headSha: typeof pr.headRefOid === "string" ? pr.headRefOid : undefined,
-    reviewThreads: parseReviewThreads(pr.reviewThreads),
+    reviewThreads: parseReviewThreads(threads),
     checks: parseChecks(pr.statusCheckRollup),
   };
+}
+
+async function fetchReviewThreads(gh: GhExecutor, config: GithubPrGoalConfig): Promise<unknown> {
+  const response = await gh.run([
+    "api",
+    "graphql",
+    "-f",
+    `owner=${config.repository.owner}`,
+    "-f",
+    `name=${config.repository.repo}`,
+    "-F",
+    `number=${config.prNumber}`,
+    "-f",
+    "query=query($owner:String!, $name:String!, $number:Int!) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) { nodes { id body author { login } url updatedAt } } } } } } }",
+  ]);
+  const parsed = JSON.parse(response) as Record<string, unknown>;
+  return (((parsed.data as Record<string, unknown> | undefined)?.repository as Record<string, unknown> | undefined)?.pullRequest as Record<string, unknown> | undefined)?.reviewThreads;
 }
 
 export function findActionable(config: GithubPrGoalConfig, observation: GithubObservation): ActionableObservation {
@@ -44,10 +62,11 @@ export function findActionable(config: GithubPrGoalConfig, observation: GithubOb
 }
 
 function parseReviewThreads(raw: unknown): ReviewThreadObservation[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((thread: unknown): ReviewThreadObservation => {
+  const threads = Array.isArray(raw) ? raw : Array.isArray((raw as { nodes?: unknown[] } | undefined)?.nodes) ? (raw as { nodes: unknown[] }).nodes : [];
+  return threads.map((thread: unknown): ReviewThreadObservation => {
     const item = thread as Record<string, unknown>;
-    const commentsRaw = Array.isArray(item.comments) ? item.comments : [];
+    const commentsSource = item.comments as { nodes?: unknown[] } | unknown[] | undefined;
+    const commentsRaw = Array.isArray(commentsSource) ? commentsSource : Array.isArray((commentsSource as { nodes?: unknown[] } | undefined)?.nodes) ? (commentsSource as { nodes: unknown[] }).nodes : [];
     return {
       id: String(item.id ?? "unknown"),
       path: typeof item.path === "string" ? item.path : undefined,

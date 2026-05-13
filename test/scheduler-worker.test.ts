@@ -22,6 +22,7 @@ test("due selection skips paused/cancelled/waiting goals", async () => {
     await t.store.create({ id: "p", type: "github_pr_review", state: "paused", summary: "p", schedule });
     await t.store.create({ id: "c", type: "github_pr_review", state: "cancelled", summary: "c", schedule });
     await t.store.create({ id: "d", type: "github_pr_review", state: "needs_decision", summary: "d", schedule, pendingDecisions: [{ id: "d1", goalId: "d", prompt: "?", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true }] });
+    await t.store.create({ id: "n", type: "github_pr_review", state: "active", summary: "n", schedule, pendingDecisions: [{ id: "n1", goalId: "n", prompt: "?", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: false }] });
     assert.deepEqual((await selectDueGoals(t.store, new Date("2026-01-01T00:00:01Z"))).map((g) => g.id), ["a"]);
   } finally {
     await t.cleanup();
@@ -50,6 +51,8 @@ test("worker event ingestion records decisions, completion, failures", async () 
     assert.equal((await t.store.get("g")).state, "needs_decision");
     await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc" });
     assert.equal((await t.store.get("g")).lastRunSummary, "done");
+    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "quiet", summary: "quiet" });
+    assert.equal((await t.store.get("g")).state, "completed");
   } finally {
     await t.cleanup();
   }

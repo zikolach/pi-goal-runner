@@ -10,14 +10,16 @@ import { createDefaultNotificationSink, notifyNonFatal } from "./notifications.j
 import { safeError } from "./redaction.js";
 export async function selectDueGoals(store, now = new Date()) {
     const goals = await store.list();
-    return goals.filter((goal) => isDue(goal, now) && !isTerminal(goal.state) && goal.state !== "paused" && goal.state !== "needs_decision" && !goal.pendingDecisions.some((decision) => decision.status === "pending" && decision.required));
+    return goals.filter((goal) => !skipReason(goal, now));
 }
 export function skipReason(goal, now = new Date()) {
     if (isTerminal(goal.state))
         return `terminal state ${goal.state}`;
     if (goal.state === "paused")
         return "paused";
-    if (goal.pendingDecisions.some((decision) => decision.status === "pending" && decision.required))
+    if (goal.state === "needs_decision")
+        return "waiting for user decision";
+    if (goal.pendingDecisions.some((decision) => decision.status === "pending"))
         return "waiting for user decision";
     if (!isDue(goal, now))
         return `not due until ${goal.schedule.nextCheckAt}`;

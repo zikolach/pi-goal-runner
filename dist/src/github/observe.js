@@ -8,17 +8,34 @@ export async function observeGithubPr(gh, config) {
         "--repo",
         repo,
         "--json",
-        "url,headRefName,headRefOid,reviewThreads,statusCheckRollup",
+        "url,headRefName,headRefOid,statusCheckRollup",
     ]);
     const pr = JSON.parse(prJson);
+    const threads = await fetchReviewThreads(gh, config);
     return {
         observedAt: new Date().toISOString(),
         prUrl: typeof pr.url === "string" ? pr.url : config.prUrl,
         headBranch: typeof pr.headRefName === "string" ? pr.headRefName : config.repository.branch,
         headSha: typeof pr.headRefOid === "string" ? pr.headRefOid : undefined,
-        reviewThreads: parseReviewThreads(pr.reviewThreads),
+        reviewThreads: parseReviewThreads(threads),
         checks: parseChecks(pr.statusCheckRollup),
     };
+}
+async function fetchReviewThreads(gh, config) {
+    const response = await gh.run([
+        "api",
+        "graphql",
+        "-f",
+        `owner=${config.repository.owner}`,
+        "-f",
+        `name=${config.repository.repo}`,
+        "-F",
+        `number=${config.prNumber}`,
+        "-f",
+        "query=query($owner:String!, $name:String!, $number:Int!) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) { nodes { id body author { login } url updatedAt } } } } } } }",
+    ]);
+    const parsed = JSON.parse(response);
+    return parsed.data?.repository?.pullRequest?.reviewThreads;
 }
 export function findActionable(config, observation) {
     const lastHandled = config.lastHandledAt ? new Date(config.lastHandledAt).getTime() : 0;
@@ -45,11 +62,11 @@ export function findActionable(config, observation) {
     return { actionable: threads.length > 0 || checks.length > 0, observedAt: observation.observedAt, threads, checks, reason: reasons.join("; ") || "No actionable PR feedback" };
 }
 function parseReviewThreads(raw) {
-    if (!Array.isArray(raw))
-        return [];
-    return raw.map((thread) => {
+    const threads = Array.isArray(raw) ? raw : Array.isArray(raw?.nodes) ? raw.nodes : [];
+    return threads.map((thread) => {
         const item = thread;
-        const commentsRaw = Array.isArray(item.comments) ? item.comments : [];
+        const commentsSource = item.comments;
+        const commentsRaw = Array.isArray(commentsSource) ? commentsSource : Array.isArray(commentsSource?.nodes) ? commentsSource.nodes : [];
         return {
             id: String(item.id ?? "unknown"),
             path: typeof item.path === "string" ? item.path : undefined,

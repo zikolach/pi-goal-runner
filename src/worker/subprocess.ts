@@ -78,7 +78,7 @@ export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId:
     });
     if (event.type === "progress") return { ...goal, latestProgress: event.message, runHistory };
     if (event.type === "decision") return { ...addPendingDecision({ ...goal, runHistory }, event.decision), latestProgress: event.decision.prompt };
-    if (event.type === "complete") return { ...goal, state: "active", latestProgress: event.summary, lastRunSummary: event.summary, runHistory, github: goal.github ? { ...goal.github, lastHandledAt: event.timestamp, handledThreadIds: [...new Set([...goal.github.handledThreadIds, ...(event.addressedThreadIds ?? [])])] } : goal.github };
+    if (event.type === "complete") return { ...goal, state: event.status === "quiet" ? "completed" : "active", latestProgress: event.summary, lastRunSummary: event.summary, runHistory, github: goal.github ? { ...goal.github, lastHandledAt: event.timestamp, handledThreadIds: [...new Set([...goal.github.handledThreadIds, ...(event.addressedThreadIds ?? [])])] } : goal.github };
     if (event.type === "failure") return { ...goal, state: "failed", latestProgress: event.message, runHistory };
     return { ...goal, runHistory, latestProgress: event.message };
   });

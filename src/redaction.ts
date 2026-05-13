@@ -3,6 +3,9 @@ const SECRET_PATTERNS: RegExp[] = [
   /github_pat_[A-Za-z0-9_]{20,}/g,
   /sk-[A-Za-z0-9_-]{20,}/g,
   /xox[baprs]-[A-Za-z0-9-]{20,}/g,
+];
+
+const PREFIXED_SECRET_PATTERNS: RegExp[] = [
   /([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY)[A-Z0-9_]*=)([^\s]+)/gi,
   /(Authorization:\s*(?:Bearer|token)\s+)([^\s]+)/gi,
 ];
@@ -12,10 +15,10 @@ export const DEFAULT_MAX_TEXT = 4_000;
 export function redactText(input: unknown, maxLength = DEFAULT_MAX_TEXT): string {
   let text = typeof input === "string" ? input : JSON.stringify(input ?? "");
   for (const pattern of SECRET_PATTERNS) {
-    text = text.replace(pattern, (...matches: string[]) => {
-      if (matches.length >= 3 && matches[1]) return `${matches[1]}[REDACTED]`;
-      return "[REDACTED]";
-    });
+    text = text.replace(pattern, "[REDACTED]");
+  }
+  for (const pattern of PREFIXED_SECRET_PATTERNS) {
+    text = text.replace(pattern, (_match, prefix: string) => `${prefix}[REDACTED]`);
   }
   if (text.length > maxLength) return `${text.slice(0, maxLength)}… [truncated]`;
   return text;

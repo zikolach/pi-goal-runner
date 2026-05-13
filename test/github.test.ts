@@ -19,10 +19,30 @@ test("parses repositories and PRs", () => {
 });
 
 test("observes mocked gh output and detects no-op", async () => {
-  const gh: GhExecutor = { run: async () => JSON.stringify({ url: "u", headRefName: "b", headRefOid: "sha", reviewThreads: [], statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] }) };
+  const calls: string[][] = [];
+  const gh: GhExecutor = {
+    run: async (args) => {
+      calls.push(args);
+      if (args[0] === "api") return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } });
+      return JSON.stringify({ url: "u", headRefName: "b", headRefOid: "sha", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] });
+    },
+  };
   const observation = await observeGithubPr(gh, config);
   const actionable = findActionable(config, observation);
   assert.equal(actionable.actionable, false);
+  assert.equal(calls.length, 2);
+});
+
+test("observes review threads through GraphQL", async () => {
+  const gh: GhExecutor = {
+    run: async (args) => {
+      if (args[0] === "api") return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [{ id: "t1", isResolved: false, isOutdated: false, path: "file.ts", comments: { nodes: [{ id: "c1", body: "fix", author: { login: "bot" }, updatedAt: "2026-01-01T00:00:00Z" }] } }] } } } } });
+      return JSON.stringify({ url: "u", headRefName: "b", headRefOid: "sha", statusCheckRollup: [] });
+    },
+  };
+  const observation = await observeGithubPr(gh, config);
+  assert.equal(observation.reviewThreads[0].id, "t1");
+  assert.equal(findActionable(config, observation).actionable, true);
 });
 
 test("detects new review and failing checks, ignores stale handled comments", () => {

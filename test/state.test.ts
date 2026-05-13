@@ -6,7 +6,9 @@ import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { appendGoalEvent, parseWorkerEventLine } from "../src/state/events.js";
 import { acquireGoalLock } from "../src/state/lock.js";
+import { sanitizeGoalId } from "../src/state/paths.js";
 import { applyNoActionPolicy, defaultSchedule, increaseBackoff, quietWindowExpired } from "../src/policy.js";
+import { redactText } from "../src/redaction.js";
 
 async function tempStore() {
   const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-"));
@@ -36,6 +38,31 @@ test("append event log redacts secrets and parses malformed events safely", asyn
   } finally {
     await t.cleanup();
   }
+});
+
+test("malformed decision options are normalized safely", () => {
+  const event = parseWorkerEventLine("goal-1", "run-1", JSON.stringify({ type: "decision", decision: { id: "d", prompt: "Pick", options: [null, "bad", { id: "ok", label: "Okay" }] } }));
+  assert.equal(event.type, "decision");
+  if (event.type === "decision") {
+    assert.deepEqual(event.decision.options, [
+      { id: "option-1", label: "" },
+      { id: "option-2", label: "" },
+      { id: "ok", label: "Okay" },
+    ]);
+  }
+});
+
+test("goal ids reject traversal segments", () => {
+  assert.equal(sanitizeGoalId("goal-1"), "goal-1");
+  assert.throws(() => sanitizeGoalId("."), /Invalid goal id/);
+  assert.throws(() => sanitizeGoalId(".."), /Invalid goal id/);
+  assert.throws(() => sanitizeGoalId("goal..1"), /Invalid goal id/);
+  assert.throws(() => sanitizeGoalId("/absolute"), /Invalid goal id/);
+});
+
+test("redaction does not leak regex offsets for token patterns", () => {
+  assert.equal(redactText("token ghp_1234567890123456789012345"), "token [REDACTED]");
+  assert.equal(redactText("API_TOKEN=secret-value"), "API_TOKEN=[REDACTED]");
 });
 
 test("per-goal locks exclude concurrent holders", async () => {

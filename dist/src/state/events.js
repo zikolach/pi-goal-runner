@@ -26,7 +26,7 @@ export function normalizeWorkerEvent(goalId, runId, raw) {
                 goalId,
                 runId,
                 prompt: redactText(decisionRaw?.prompt ?? event.prompt ?? "Decision required", 2_000),
-                options: options.map((option) => ({ id: redactText(option.id, 80), label: redactText(option.label, 120) })),
+                options: normalizeDecisionOptions(options),
                 createdAt: nowIso(),
                 timeoutAt: decisionRaw?.timeoutAt,
                 status: "pending",
@@ -58,6 +58,18 @@ export function normalizeWorkerEvent(goalId, runId, raw) {
         };
     }
     return { type: "diagnostic", goalId, runId, timestamp: nowIso(), message: `Unknown worker event type: ${redactText(String(type), 100)}` };
+}
+function normalizeDecisionOptions(options) {
+    return options.map((option, index) => {
+        if (!option || typeof option !== "object") {
+            return { id: `option-${index + 1}`, label: "" };
+        }
+        const item = option;
+        return {
+            id: redactText(item.id ?? `option-${index + 1}`, 80),
+            label: redactText(item.label ?? "", 120),
+        };
+    });
 }
 export function parseWorkerEventLine(goalId, runId, line) {
     try {

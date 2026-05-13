@@ -18,8 +18,14 @@ export function createStatePaths(root = defaultStateRoot()) {
     };
 }
 export function sanitizeGoalId(goalId) {
-    if (!/^[a-zA-Z0-9._-]+$/.test(goalId))
+    if (goalId === "." ||
+        goalId === ".." ||
+        goalId.includes("..") ||
+        path.isAbsolute(goalId) ||
+        path.basename(goalId) !== goalId ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(goalId)) {
         throw new Error(`Invalid goal id: ${goalId}`);
+    }
     return goalId;
 }
 //# sourceMappingURL=paths.js.map
