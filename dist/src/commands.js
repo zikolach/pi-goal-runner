@@ -92,12 +92,18 @@ function parseWatchOptions(args) {
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg === "--quiet-ms")
-            output.quietWindowMs = Number(required(args[++i], "quiet ms"));
+            output.quietWindowMs = parseNonNegativeNumber(required(args[++i], "quiet ms"), "quiet ms");
         else if (arg === "--validation")
             output.validationCommands = [required(args[++i], "validation command")];
         else if (arg === "--auto-resolve")
             output.autoReplyAndResolve = true;
     }
     return output;
+}
+function parseNonNegativeNumber(value, name) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed < 0)
+        throw new Error(`${name} must be a finite non-negative number`);
+    return parsed;
 }
 //# sourceMappingURL=commands.js.map

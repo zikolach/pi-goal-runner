@@ -6,7 +6,7 @@ import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { defaultSchedule } from "../src/policy.js";
 import { selectDueGoals, schedulerTick } from "../src/scheduler.js";
-import { ingestWorkerEvent } from "../src/worker/subprocess.js";
+import { ingestWorkerEvent, launchWorker } from "../src/worker/subprocess.js";
 import { createDefaultNotificationSink, notifyNonFatal } from "../src/notifications.js";
 
 async function tempStore() {
@@ -53,6 +53,29 @@ test("worker event ingestion records decisions, completion, failures", async () 
     assert.equal((await t.store.get("g")).lastRunSummary, "done");
     await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "quiet", summary: "quiet" });
     assert.equal((await t.store.get("g")).state, "completed");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker stdout events are serialized in emission order", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "console.log(JSON.stringify({type:'progress', message:'one'}));",
+          "console.log(JSON.stringify({type:'decision', decision:{id:'d', prompt:'Pick', options:[{id:'x', label:'X'}]}}));",
+          "console.log(JSON.stringify({type:'complete', status:'success', summary:'done'}));",
+        ].join(""),
+      ],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.pendingDecisions.some((decision) => decision.id === "d"), true);
+    assert.equal(updated.lastRunSummary, "done");
   } finally {
     await t.cleanup();
   }

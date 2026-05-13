@@ -27,6 +27,12 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
     let stdoutBuffer = "";
     let stderr = "";
     let timedOut = false;
+    let ingestionQueue: Promise<void> = Promise.resolve();
+    const enqueueEvent = (event: GoalEvent, forcedStatus?: RunSummary["status"]) => {
+      ingestionQueue = ingestionQueue.then(() => ingestWorkerEvent(store, goal.id, runId, event, forcedStatus));
+      ingestionQueue.catch(() => undefined);
+      return ingestionQueue;
+    };
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
@@ -38,7 +44,7 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
       const lines = stdoutBuffer.split(/\r?\n/);
       stdoutBuffer = lines.pop() ?? "";
       for (const line of lines) {
-        if (line.trim()) void ingestWorkerEvent(store, goal.id, runId, parseWorkerEventLine(goal.id, runId, line));
+        if (line.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, line));
       }
     });
     child.stderr.setEncoding("utf8");
@@ -49,13 +55,14 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
     child.on("close", (code) => {
       clearTimeout(timer);
       void (async () => {
-        if (stdoutBuffer.trim()) await ingestWorkerEvent(store, goal.id, runId, parseWorkerEventLine(goal.id, runId, stdoutBuffer));
+        if (stdoutBuffer.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, stdoutBuffer));
+        await ingestionQueue;
         if (timedOut) {
           const event: FailureEvent = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: "Worker timed out", retryable: true };
-          await ingestWorkerEvent(store, goal.id, runId, event, "timeout");
+          await enqueueEvent(event, "timeout");
         } else if (code !== 0) {
           const event: FailureEvent = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker exited ${code}: ${redactText(stderr, 2_000)}`, retryable: true };
-          await ingestWorkerEvent(store, goal.id, runId, event, "failed");
+          await enqueueEvent(event, "failed");
         }
         resolve(await store.get(goal.id));
       })().catch(async (error) => {

@@ -95,9 +95,15 @@ function parseWatchOptions(args: string[]): { quietWindowMs?: number; validation
   const output: { quietWindowMs?: number; validationCommands?: string[]; autoReplyAndResolve?: boolean } = {};
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (arg === "--quiet-ms") output.quietWindowMs = Number(required(args[++i], "quiet ms"));
+    if (arg === "--quiet-ms") output.quietWindowMs = parseNonNegativeNumber(required(args[++i], "quiet ms"), "quiet ms");
     else if (arg === "--validation") output.validationCommands = [required(args[++i], "validation command")];
     else if (arg === "--auto-resolve") output.autoReplyAndResolve = true;
   }
   return output;
+}
+
+function parseNonNegativeNumber(value: string, name: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) throw new Error(`${name} must be a finite non-negative number`);
+  return parsed;
 }

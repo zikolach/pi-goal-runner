@@ -49,3 +49,13 @@ test("decisions and answers validate choices", async () => {
     await t.cleanup();
   }
 });
+
+test("watch-pr validates quiet window option before creating goals", async () => {
+  const t = await tempStore();
+  try {
+    await assert.rejects(() => handleGoalCommand(t.store, "watch-pr owner/repo 1 --quiet-ms nope"), /quiet ms must be a finite non-negative number/);
+    await assert.rejects(() => handleGoalCommand(t.store, "watch-pr owner/repo 1 --quiet-ms -1"), /quiet ms must be a finite non-negative number/);
+  } finally {
+    await t.cleanup();
+  }
+});
