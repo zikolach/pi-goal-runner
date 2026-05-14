@@ -115,6 +115,9 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
 export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId: string, event: GoalEvent, forcedStatus?: RunSummary["status"]): Promise<void> {
   await appendGoalEvent(store.paths, event);
   await store.update(goalId, (goal) => {
+    if (event.type === "failure" && hasTerminalRun(goal, runId)) {
+      return { ...goal, latestProgress: goal.latestProgress ?? event.message };
+    }
     const runHistory = goal.runHistory.map((run) => {
       if (run.id !== runId) return run;
       if (event.type === "complete") return { ...run, completedAt: event.timestamp, status: "success" as const, summary: event.summary, commitSha: event.commitSha, validationResults: event.validationResults };
@@ -132,6 +135,11 @@ export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId:
     }
     return { ...goal, runHistory, latestProgress: event.message };
   });
+}
+
+function hasTerminalRun(goal: GoalRecord, runId: string): boolean {
+  const run = goal.runHistory.find((candidate) => candidate.id === runId);
+  return run?.status === "success" || run?.status === "needs_decision" || run?.status === "timeout" || (run?.status === "failed" && Boolean(run.completedAt));
 }
 
 function updateGithubHandledState(goal: GoalRecord, event: Extract<GoalEvent, { type: "complete" }>): GoalRecord["github"] {

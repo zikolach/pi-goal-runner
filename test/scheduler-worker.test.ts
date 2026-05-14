@@ -71,6 +71,21 @@ test("worker event ingestion records decisions, completion, failures", async () 
   }
 });
 
+test("late worker failure does not override terminal success", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done", commitSha: "abc1234" });
+    await ingestWorkerEvent(t.store, "g", "r", { type: "failure", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:01Z", message: "late process exit", retryable: true });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    assert.equal(updated.latestProgress, "done");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("worker failure events apply retry backoff", async () => {
   const t = await tempStore();
   try {

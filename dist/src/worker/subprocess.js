@@ -112,6 +112,9 @@ export async function launchWorker(store, goal, prompt, options = {}) {
 export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatus) {
     await appendGoalEvent(store.paths, event);
     await store.update(goalId, (goal) => {
+        if (event.type === "failure" && hasTerminalRun(goal, runId)) {
+            return { ...goal, latestProgress: goal.latestProgress ?? event.message };
+        }
         const runHistory = goal.runHistory.map((run) => {
             if (run.id !== runId)
                 return run;
@@ -136,6 +139,10 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
         }
         return { ...goal, runHistory, latestProgress: event.message };
     });
+}
+function hasTerminalRun(goal, runId) {
+    const run = goal.runHistory.find((candidate) => candidate.id === runId);
+    return run?.status === "success" || run?.status === "needs_decision" || run?.status === "timeout" || (run?.status === "failed" && Boolean(run.completedAt));
 }
 function updateGithubHandledState(goal, event) {
     if (!goal.github || event.status !== "success")
