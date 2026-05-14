@@ -105,7 +105,7 @@ function releaseLockAfterWorker(workerDone: Promise<GoalRecord>, release: () => 
 async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sink: NotificationSink, options: SchedulerOptions): Promise<CheckGoalResult> {
   const now = options.now ?? new Date();
   if (goal.type !== "github_pr_review" || !goal.github) throw new Error(`Unsupported goal type: ${goal.type}`);
-  const observation: GithubObservation = await observeGithubPr(gh, goal.github);
+  const observation: GithubObservation = await observeGithubPr(gh, goal.github, { now });
   const actionable: ActionableObservation = findActionable(goal.github, observation);
   await store.update(
     goal.id,

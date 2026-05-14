@@ -16,7 +16,11 @@ interface ReviewThreadNode {
   comments?: { pageInfo?: GraphqlPageInfo; nodes?: unknown[] };
 }
 
-export async function observeGithubPr(gh: GhExecutor, config: GithubPrGoalConfig): Promise<GithubObservation> {
+export interface ObserveGithubPrOptions {
+  now?: Date;
+}
+
+export async function observeGithubPr(gh: GhExecutor, config: GithubPrGoalConfig, options: ObserveGithubPrOptions = {}): Promise<GithubObservation> {
   const repo = `${config.repository.owner}/${config.repository.repo}`;
   const prJson = await gh.run([
     "pr",
@@ -30,7 +34,7 @@ export async function observeGithubPr(gh: GhExecutor, config: GithubPrGoalConfig
   const pr = JSON.parse(prJson) as Record<string, unknown>;
   const threads = await fetchReviewThreads(gh, config);
   return {
-    observedAt: new Date().toISOString(),
+    observedAt: (options.now ?? new Date()).toISOString(),
     prUrl: typeof pr.url === "string" ? pr.url : config.prUrl,
     headBranch: typeof pr.headRefName === "string" ? pr.headRefName : config.repository.branch,
     headSha: typeof pr.headRefOid === "string" ? pr.headRefOid : undefined,

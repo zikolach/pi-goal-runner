@@ -51,6 +51,7 @@ test("scheduler uses injected time for quiet policy updates", async () => {
     const gh = { run: async (args: string[]) => args[0] === "api" ? JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } }) : JSON.stringify({ statusCheckRollup: [] }) };
     await schedulerTick(t.store, { gh, now: new Date("2026-01-01T01:00:00Z"), worker: { dryRun: true } });
     const updated = await t.store.get("g");
+    assert.equal(updated.schedule.quietWindow.quietSince, "2026-01-01T01:00:00.000Z");
     assert.equal(updated.schedule.nextCheckAt, "2026-01-01T01:02:00.000Z");
     assert.equal(updated.updatedAt, "2026-01-01T01:00:00.000Z");
   } finally {
@@ -368,6 +369,56 @@ test("worker stdout without newlines is bounded and records failure", async () =
     assert.equal(updated.state, "failed");
     assert.match(updated.latestProgress ?? "", /stdout line exceeded/);
   } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker clears pending SIGKILL escalation when a timed-out child exits", async () => {
+  const t = await tempStore();
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  type CapturedTimeout = {
+    delay?: number;
+    cleared: boolean;
+    fire: () => void;
+    unref: () => CapturedTimeout;
+  };
+  const capturedTimeouts: CapturedTimeout[] = [];
+  try {
+    globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      const handle: CapturedTimeout = {
+        delay,
+        cleared: false,
+        fire: () => {
+          if (!handle.cleared) callback(...args);
+        },
+        unref: () => handle,
+      };
+      capturedTimeouts.push(handle);
+      if (delay !== 5_000) realSetTimeout(() => handle.fire(), 0);
+      return handle as unknown as ReturnType<typeof globalThis.setTimeout>;
+    }) as unknown as typeof globalThis.setTimeout;
+    globalThis.clearTimeout = ((handle?: ReturnType<typeof globalThis.setTimeout>) => {
+      const captured = handle as unknown as CapturedTimeout | undefined;
+      if (captured && typeof captured === "object" && "cleared" in captured) {
+        captured.cleared = true;
+        return;
+      }
+      return realClearTimeout(handle as Parameters<typeof realClearTimeout>[0]);
+    }) as unknown as typeof globalThis.clearTimeout;
+
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "setTimeout(() => process.exit(0), 50); setInterval(() => {}, 1000);"],
+      timeoutMs: 1,
+    });
+    const sigkillTimer = capturedTimeouts.find((handle) => handle.delay === 5_000);
+    assert.ok(sigkillTimer);
+    assert.equal(sigkillTimer.cleared, true);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
     await t.cleanup();
   }
 });

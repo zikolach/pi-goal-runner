@@ -76,8 +76,9 @@ test("observes mocked gh output and detects no-op", async () => {
       return JSON.stringify({ url: "u", headRefName: "b", headRefOid: "sha", statusCheckRollup: [{ name: "ci", conclusion: "SUCCESS" }] });
     },
   };
-  const observation = await observeGithubPr(gh, config);
+  const observation = await observeGithubPr(gh, config, { now: new Date("2026-01-01T01:02:03.000Z") });
   const actionable = findActionable(config, observation);
+  assert.equal(observation.observedAt, "2026-01-01T01:02:03.000Z");
   assert.equal(actionable.actionable, false);
   assert.equal(calls.length, 2);
 });

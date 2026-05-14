@@ -97,7 +97,7 @@ async function checkGoal(store, goal, gh, sink, options) {
     const now = options.now ?? new Date();
     if (goal.type !== "github_pr_review" || !goal.github)
         throw new Error(`Unsupported goal type: ${goal.type}`);
-    const observation = await observeGithubPr(gh, goal.github);
+    const observation = await observeGithubPr(gh, goal.github, { now });
     const actionable = findActionable(goal.github, observation);
     await store.update(goal.id, (current) => ({
         ...current,

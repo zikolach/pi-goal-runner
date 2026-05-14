@@ -1,5 +1,5 @@
 import { redactText } from "../redaction.js";
-export async function observeGithubPr(gh, config) {
+export async function observeGithubPr(gh, config, options = {}) {
     const repo = `${config.repository.owner}/${config.repository.repo}`;
     const prJson = await gh.run([
         "pr",
@@ -13,7 +13,7 @@ export async function observeGithubPr(gh, config) {
     const pr = JSON.parse(prJson);
     const threads = await fetchReviewThreads(gh, config);
     return {
-        observedAt: new Date().toISOString(),
+        observedAt: (options.now ?? new Date()).toISOString(),
         prUrl: typeof pr.url === "string" ? pr.url : config.prUrl,
         headBranch: typeof pr.headRefName === "string" ? pr.headRefName : config.repository.branch,
         headSha: typeof pr.headRefOid === "string" ? pr.headRefOid : undefined,

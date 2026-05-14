@@ -97,10 +97,23 @@ export async function startWorker(store, goal, prompt, options = {}) {
                 offset = newlineIndex + 1;
             }
         };
-        const timer = setTimeout(() => {
+        let timeoutTimer;
+        let sigkillTimer;
+        const clearTerminationTimers = () => {
+            if (timeoutTimer) {
+                clearTimeout(timeoutTimer);
+                timeoutTimer = undefined;
+            }
+            if (sigkillTimer) {
+                clearTimeout(sigkillTimer);
+                sigkillTimer = undefined;
+            }
+        };
+        timeoutTimer = setTimeout(() => {
             timedOut = true;
             child.kill("SIGTERM");
-            setTimeout(() => child.kill("SIGKILL"), 5_000).unref();
+            sigkillTimer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+            sigkillTimer.unref();
         }, timeoutMs);
         child.stdout.setEncoding("utf8");
         child.stdout.on("data", (chunk) => {
@@ -112,7 +125,7 @@ export async function startWorker(store, goal, prompt, options = {}) {
             stderr = stderr.slice(-4_000);
         });
         child.on("error", (error) => {
-            clearTimeout(timer);
+            clearTerminationTimers();
             if (settled)
                 return;
             settled = true;
@@ -127,7 +140,7 @@ export async function startWorker(store, goal, prompt, options = {}) {
             });
         });
         child.on("close", (code, signal) => {
-            clearTimeout(timer);
+            clearTerminationTimers();
             if (settled)
                 return;
             settled = true;
