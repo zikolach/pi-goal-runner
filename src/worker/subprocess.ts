@@ -16,6 +16,8 @@ export interface WorkerLaunchOptions {
   onComplete?: (event: CompleteEvent) => Promise<void>;
 }
 
+export const MAX_WORKER_STDOUT_BUFFER_CHARS = 64 * 1024;
+
 export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: string, options: WorkerLaunchOptions = {}): Promise<GoalRecord> {
   const runId = `run-${Date.now().toString(36)}`;
   const run: RunSummary = { id: runId, startedAt: new Date().toISOString(), status: "running" };
@@ -30,6 +32,7 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
     const child = spawn(command, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.end(prompt);
     let stdoutBuffer = "";
+    let stdoutOverflowed = false;
     let stderr = "";
     let timedOut = false;
     let terminalEventType: "complete" | "failure" | "decision" | undefined;
@@ -49,6 +52,50 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
       });
       return ingestionQueue;
     };
+    const failForStdoutOverflow = () => {
+      if (stdoutOverflowed) return;
+      stdoutOverflowed = true;
+      stdoutBuffer = stdoutBuffer.slice(0, MAX_WORKER_STDOUT_BUFFER_CHARS);
+      const event: FailureEvent = {
+        type: "failure",
+        goalId: goal.id,
+        runId,
+        timestamp: new Date().toISOString(),
+        message: `Worker stdout line exceeded ${MAX_WORKER_STDOUT_BUFFER_CHARS} characters without a newline`,
+        retryable: true,
+      };
+      enqueueEvent(event, "failed");
+      child.kill("SIGTERM");
+    };
+    const appendStdoutFragment = (fragment: string) => {
+      if (!fragment || stdoutOverflowed) return;
+      const remaining = MAX_WORKER_STDOUT_BUFFER_CHARS - stdoutBuffer.length;
+      if (fragment.length > remaining) {
+        if (remaining > 0) stdoutBuffer += fragment.slice(0, remaining);
+        failForStdoutOverflow();
+        return;
+      }
+      stdoutBuffer += fragment;
+    };
+    const emitBufferedStdoutLine = () => {
+      if (stdoutOverflowed) return;
+      const line = stdoutBuffer.endsWith("\r") ? stdoutBuffer.slice(0, -1) : stdoutBuffer;
+      stdoutBuffer = "";
+      if (line.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, line));
+    };
+    const processStdoutChunk = (chunk: string) => {
+      let offset = 0;
+      while (offset < chunk.length && !stdoutOverflowed) {
+        const newlineIndex = chunk.indexOf("\n", offset);
+        if (newlineIndex === -1) {
+          appendStdoutFragment(chunk.slice(offset));
+          break;
+        }
+        appendStdoutFragment(chunk.slice(offset, newlineIndex));
+        emitBufferedStdoutLine();
+        offset = newlineIndex + 1;
+      }
+    };
     const timer = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
@@ -56,12 +103,7 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
     }, timeoutMs);
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      stdoutBuffer += chunk;
-      const lines = stdoutBuffer.split(/\r?\n/);
-      stdoutBuffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (line.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, line));
-      }
+      processStdoutChunk(chunk);
     });
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
@@ -87,7 +129,7 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
       if (settled) return;
       settled = true;
       void (async () => {
-        if (stdoutBuffer.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, stdoutBuffer));
+        if (!stdoutOverflowed && stdoutBuffer.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, stdoutBuffer));
         await ingestionQueue;
         if (terminalEventType) {
           // Worker protocol terminal events are authoritative; process exit status

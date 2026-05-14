@@ -6,7 +6,7 @@ import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { defaultSchedule } from "../src/policy.js";
 import { handleSuccessfulWorkerComplete, selectDueGoals, schedulerTick } from "../src/scheduler.js";
-import { ingestWorkerEvent, launchWorker } from "../src/worker/subprocess.js";
+import { ingestWorkerEvent, launchWorker, MAX_WORKER_STDOUT_BUFFER_CHARS } from "../src/worker/subprocess.js";
 import { CommandNotificationSink, createDefaultNotificationSink, notifyNonFatal } from "../src/notifications.js";
 
 async function tempStore() {
@@ -209,6 +209,23 @@ test("worker stdout events are serialized in emission order", async () => {
     const updated = await t.store.get("g");
     assert.equal(updated.pendingDecisions.some((decision) => decision.id === "d"), true);
     assert.equal(updated.lastRunSummary, "done");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker stdout without newlines is bounded and records failure", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", `process.stdout.write("x".repeat(${MAX_WORKER_STDOUT_BUFFER_CHARS + 1})); setTimeout(() => {}, 1000);`],
+      timeoutMs: 5_000,
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "failed");
+    assert.match(updated.latestProgress ?? "", /stdout line exceeded/);
   } finally {
     await t.cleanup();
   }
