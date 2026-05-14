@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { appendRecentUnique, MAX_HANDLED_THREAD_IDS } from "../github/handled.js";
 import { appendGoalEvent, parseWorkerEventLine } from "../state/events.js";
 import type { GoalStore } from "../state/store.js";
 import type { CompleteEvent, FailureEvent, GoalEvent, GoalRecord, RunSummary } from "../types.js";
@@ -240,7 +241,7 @@ function updateGithubHandledState(goal: GoalRecord, event: Extract<GoalEvent, { 
   return {
     ...goal.github,
     lastHandledAt: event.timestamp,
-    handledThreadIds: [...new Set([...goal.github.handledThreadIds, ...(event.addressedThreadIds ?? [])])],
+    handledThreadIds: appendRecentUnique(goal.github.handledThreadIds, event.addressedThreadIds ?? [], MAX_HANDLED_THREAD_IDS),
   };
 }
 

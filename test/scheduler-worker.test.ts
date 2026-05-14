@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { defaultSchedule } from "../src/policy.js";
+import { MAX_HANDLED_CHECK_NAMES, MAX_HANDLED_THREAD_IDS } from "../src/github/handled.js";
 import { handleSuccessfulWorkerComplete, selectDueGoals, schedulerTick } from "../src/scheduler.js";
 import { ingestWorkerEvent, launchWorker, MAX_WORKER_STDOUT_BUFFER_CHARS } from "../src/worker/subprocess.js";
 import { CommandNotificationSink, createDefaultNotificationSink, notifyNonFatal } from "../src/notifications.js";
@@ -621,6 +622,32 @@ test("stale completion does not advance handled timestamps", async () => {
   }
 });
 
+test("successful worker completion caps handled thread IDs to recent values", async () => {
+  const t = await tempStore();
+  try {
+    const existing = Array.from({ length: MAX_HANDLED_THREAD_IDS }, (_, index) => `old-${index}`);
+    const addressed = Array.from({ length: 10 }, (_, index) => `new-${index}`);
+    await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "running",
+      summary: "g",
+      schedule: defaultSchedule(),
+      runHistory: [{ id: "r", startedAt: "", status: "running" }],
+      github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: existing, handledCheckNames: [] },
+    });
+
+    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done", addressedThreadIds: addressed });
+
+    const updated = await t.store.get("g");
+    assert.equal(updated.github?.handledThreadIds.length, MAX_HANDLED_THREAD_IDS);
+    assert.deepEqual(updated.github?.handledThreadIds.slice(-addressed.length), addressed);
+    assert.equal(updated.github?.handledThreadIds.includes("old-0"), false);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("successful worker completion records handled check names", async () => {
   const t = await tempStore();
   try {
@@ -639,6 +666,32 @@ test("successful worker completion records handled check names", async () => {
     const updated = await t.store.get("g");
     assert.deepEqual(updated.github?.handledCheckNames, ["ci", "lint"]);
     assert.equal(updated.updatedAt, completedAt);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("successful worker completion caps handled check names to recent values", async () => {
+  const t = await tempStore();
+  try {
+    const existing = Array.from({ length: MAX_HANDLED_CHECK_NAMES }, (_, index) => `old-${index}`);
+    const observed = Array.from({ length: 10 }, (_, index) => `new-${index}`);
+    const goal = await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: existing },
+    });
+    const gh = { run: async (_args: string[]) => "{}" };
+
+    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00.000Z", status: "success", summary: "done" }, observed);
+
+    const updated = await t.store.get("g");
+    assert.equal(updated.github?.handledCheckNames.length, MAX_HANDLED_CHECK_NAMES);
+    assert.deepEqual(updated.github?.handledCheckNames.slice(-observed.length), observed);
+    assert.equal(updated.github?.handledCheckNames.includes("old-0"), false);
   } finally {
     await t.cleanup();
   }

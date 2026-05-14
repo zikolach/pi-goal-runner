@@ -4,6 +4,7 @@ import { appendGoalEvent } from "./state/events.js";
 import { acquireGoalLock } from "./state/lock.js";
 import { applyActionablePolicy, applyNoActionPolicy, increaseBackoff, isDue, isTerminal, nextCheckAt } from "./policy.js";
 import { createGhExecutor, type GhExecutor } from "./github/gh.js";
+import { appendRecentUnique, MAX_HANDLED_CHECK_NAMES } from "./github/handled.js";
 import { findActionable, observeGithubPr } from "./github/observe.js";
 import { replyAndResolveAddressedThreads } from "./github/update.js";
 import { buildWorkerPrompt } from "./worker/prompt.js";
@@ -170,7 +171,7 @@ export async function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExe
   if (handledCheckNames.length > 0) {
     await store.update(goal.id, (current) => ({
       ...current,
-      github: current.github ? { ...current.github, handledCheckNames: [...new Set([...current.github.handledCheckNames, ...handledCheckNames])] } : current.github,
+      github: current.github ? { ...current.github, handledCheckNames: appendRecentUnique(current.github.handledCheckNames, handledCheckNames, MAX_HANDLED_CHECK_NAMES) } : current.github,
     }), { updatedAt: event.timestamp });
   }
   if (!goal.github.autoReplyAndResolve) return;

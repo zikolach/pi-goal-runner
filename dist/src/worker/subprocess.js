@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { appendRecentUnique, MAX_HANDLED_THREAD_IDS } from "../github/handled.js";
 import { appendGoalEvent, parseWorkerEventLine } from "../state/events.js";
 import { addPendingDecision } from "../decisions.js";
 import { redactText } from "../redaction.js";
@@ -241,7 +242,7 @@ function updateGithubHandledState(goal, event) {
     return {
         ...goal.github,
         lastHandledAt: event.timestamp,
-        handledThreadIds: [...new Set([...goal.github.handledThreadIds, ...(event.addressedThreadIds ?? [])])],
+        handledThreadIds: appendRecentUnique(goal.github.handledThreadIds, event.addressedThreadIds ?? [], MAX_HANDLED_THREAD_IDS),
     };
 }
 function workerArgsFromEnv() {
