@@ -38,8 +38,9 @@ test("blank state root env falls back to the home state directory", () => {
 test("creates, lists, gets, and updates goals", async () => {
   const t = await tempStore();
   try {
-    const goal = await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe", schedule: defaultSchedule() });
+    const goal = await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe" });
     assert.equal(goal.id, "goal-1");
+    assert.ok(goal.schedule.nextCheckAt);
     assert.equal((await t.store.list()).length, 1);
     await t.store.setState("goal-1", "paused");
     assert.equal((await t.store.get("goal-1")).state, "paused");

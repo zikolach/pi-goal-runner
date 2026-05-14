@@ -11,6 +11,6 @@ export interface GoalStore {
     }): Promise<GoalRecord>;
     setState(goalId: string, state: GoalState): Promise<GoalRecord>;
 }
-export type CreateGoalInput = Omit<GoalRecord, "schemaVersion" | "createdAt" | "updatedAt" | "runHistory" | "pendingDecisions"> & Partial<Pick<GoalRecord, "createdAt" | "updatedAt" | "runHistory" | "pendingDecisions" | "schedule">>;
+export type CreateGoalInput = Omit<GoalRecord, "schemaVersion" | "createdAt" | "updatedAt" | "runHistory" | "pendingDecisions" | "schedule"> & Partial<Pick<GoalRecord, "createdAt" | "updatedAt" | "runHistory" | "pendingDecisions" | "schedule">>;
 export declare function createGoalStore(root?: string): GoalStore;
 export declare function createGoalId(prefix?: string): string;
