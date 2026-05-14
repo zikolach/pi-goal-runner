@@ -2,9 +2,22 @@ import { createGoalStore } from "./state/store.js";
 import { GOAL_SUBCOMMANDS, handleGoalCommand } from "./commands.js";
 import { schedulerTick } from "./scheduler.js";
 import { parseDaemonInterval } from "./cli.js";
+export function runSerializedSchedulerTick(state, tick, onError) {
+    if (state.inFlight)
+        return false;
+    state.inFlight = true;
+    void Promise.resolve()
+        .then(tick)
+        .catch(onError)
+        .finally(() => {
+        state.inFlight = false;
+    });
+    return true;
+}
 export default function goalRunnerExtension(pi) {
     const store = createGoalStore();
     let timer;
+    const tickState = { inFlight: false };
     pi.registerCommand("goal", {
         description: "Manage durable automation goals",
         getArgumentCompletions: async (prefix) => {
@@ -48,9 +61,10 @@ export default function goalRunnerExtension(pi) {
         }
         if (intervalMs > 0) {
             timer = setInterval(() => {
-                void schedulerTick(store, { worker: { dryRun: process.env.PI_GOAL_RUNNER_DRY_RUN === "1" } })
-                    .then(() => refreshWidget(ctx))
-                    .catch((error) => ctx.ui.notify(`Goal runner tick failed: ${error instanceof Error ? error.message : String(error)}`, "error"));
+                runSerializedSchedulerTick(tickState, async () => {
+                    await schedulerTick(store, { worker: { dryRun: process.env.PI_GOAL_RUNNER_DRY_RUN === "1" } });
+                    await refreshWidget(ctx);
+                }, (error) => ctx.ui.notify(`Goal runner tick failed: ${error instanceof Error ? error.message : String(error)}`, "error"));
             }, intervalMs);
             timer.unref();
         }

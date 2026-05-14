@@ -108,8 +108,14 @@ async function checkGoal(store, goal, gh, sink, options) {
     const event = { type: "progress", goalId: goal.id, timestamp: now.toISOString(), message: `Launching worker: ${actionable.reason}` };
     await appendGoalEvent(store.paths, event);
     await notifyNonFatal(store, sink, worktreeGoal, event);
-    if (options.worker?.dryRun)
+    if (options.worker?.dryRun) {
+        await store.update(goal.id, (current) => ({
+            ...current,
+            latestProgress: event.message,
+            schedule: { ...current.schedule, nextCheckAt: nextCheckAt(current.schedule.backoff, now) },
+        }));
         return { launched: true };
+    }
     const workerRun = await startWorker(store, worktreeGoal, prompt, {
         ...options.worker,
         onComplete: async (completeEvent) => handleSuccessfulWorkerComplete(store, gh, worktreeGoal, completeEvent, actionable.checks.map((check) => check.name)),

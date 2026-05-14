@@ -82,6 +82,40 @@ test("scheduler catch block applies retry backoff with injected time", async () 
   }
 });
 
+test("scheduler dry-run launch defers next check to avoid repeated launch intents", async () => {
+  const t = await tempStore();
+  try {
+    const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
+    await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule,
+      cwd: process.cwd(),
+      github: { repository: { owner: "o", repo: "r", localPath: process.cwd(), worktreePath: process.cwd() }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+    const gh = {
+      run: async (args: string[]) =>
+        args[0] === "api"
+          ? JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [{ id: "t1", isResolved: false, isOutdated: false, comments: { nodes: [{ id: "c1", body: "fix", updatedAt: "2026-01-01T00:00:00Z" }] } }] } } } } })
+          : JSON.stringify({ url: "u", statusCheckRollup: [] }),
+    };
+    const now = new Date("2026-01-01T00:00:00Z");
+    const result = await schedulerTick(t.store, { gh, now, worker: { dryRun: true } });
+    const updated = await t.store.get("g");
+    assert.equal(result.launched, 1);
+    assert.equal(updated.state, "active");
+    assert.equal(updated.schedule.nextCheckAt, "2026-01-01T00:01:00.000Z");
+    assert.match(updated.latestProgress ?? "", /Launching worker/);
+
+    const repeatResult = await schedulerTick(t.store, { gh, now, worker: { dryRun: true } });
+    assert.equal(repeatResult.launched, 0);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("scheduler launches workers in background and continues checking due goals", async () => {
   const t = await tempStore();
   try {

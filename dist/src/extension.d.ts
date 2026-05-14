@@ -16,5 +16,9 @@ interface ExtensionContext {
 }
 interface ExtensionCommandContext extends ExtensionContext {
 }
+export interface SerializedTickState {
+    inFlight: boolean;
+}
+export declare function runSerializedSchedulerTick(state: SerializedTickState, tick: () => Promise<void>, onError: (error: unknown) => void): boolean;
 export default function goalRunnerExtension(pi: ExtensionAPI): void;
 export {};

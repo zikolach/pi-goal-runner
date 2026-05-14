@@ -19,9 +19,26 @@ interface ExtensionContext {
 
 interface ExtensionCommandContext extends ExtensionContext {}
 
+export interface SerializedTickState {
+  inFlight: boolean;
+}
+
+export function runSerializedSchedulerTick(state: SerializedTickState, tick: () => Promise<void>, onError: (error: unknown) => void): boolean {
+  if (state.inFlight) return false;
+  state.inFlight = true;
+  void Promise.resolve()
+    .then(tick)
+    .catch(onError)
+    .finally(() => {
+      state.inFlight = false;
+    });
+  return true;
+}
+
 export default function goalRunnerExtension(pi: ExtensionAPI): void {
   const store = createGoalStore();
   let timer: NodeJS.Timeout | undefined;
+  const tickState = { inFlight: false };
 
   pi.registerCommand("goal", {
     description: "Manage durable automation goals",
@@ -64,9 +81,14 @@ export default function goalRunnerExtension(pi: ExtensionAPI): void {
     }
     if (intervalMs > 0) {
       timer = setInterval(() => {
-        void schedulerTick(store, { worker: { dryRun: process.env.PI_GOAL_RUNNER_DRY_RUN === "1" } })
-          .then(() => refreshWidget(ctx))
-          .catch((error) => ctx.ui.notify(`Goal runner tick failed: ${error instanceof Error ? error.message : String(error)}`, "error"));
+        runSerializedSchedulerTick(
+          tickState,
+          async () => {
+            await schedulerTick(store, { worker: { dryRun: process.env.PI_GOAL_RUNNER_DRY_RUN === "1" } });
+            await refreshWidget(ctx);
+          },
+          (error) => ctx.ui.notify(`Goal runner tick failed: ${error instanceof Error ? error.message : String(error)}`, "error"),
+        );
       }, intervalMs);
       timer.unref();
     }

@@ -18,10 +18,9 @@ export async function createGithubPrGoal(store: GoalStore, gh: GhExecutor, repoO
   const initialBackoffMs = validateNonNegativeFiniteOption("initialBackoffMs", options.initialBackoffMs);
   const maxBackoffMs = validateNonNegativeFiniteOption("maxBackoffMs", options.maxBackoffMs);
   const schedule = defaultSchedule();
-  if (maxBackoffMs !== undefined && maxBackoffMs < (initialBackoffMs ?? schedule.backoff.initialMs)) {
-    throw new Error("maxBackoffMs must be greater than or equal to initialBackoffMs");
-  }
-  if (initialBackoffMs !== undefined && (maxBackoffMs ?? schedule.backoff.maxMs) < initialBackoffMs) {
+  const effectiveInitialBackoffMs = initialBackoffMs ?? schedule.backoff.initialMs;
+  const effectiveMaxBackoffMs = maxBackoffMs ?? schedule.backoff.maxMs;
+  if (effectiveMaxBackoffMs < effectiveInitialBackoffMs) {
     throw new Error("maxBackoffMs must be greater than or equal to initialBackoffMs");
   }
   await ensureGhAuth(gh);
