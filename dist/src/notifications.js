@@ -55,10 +55,10 @@ export async function notifyNonFatal(store, sink, goal, event) {
     try {
         await sink.notify(goal, event);
         if (sink.name !== "noop")
-            await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: new Date().toISOString(), sink: sink.name, status: "sent", message: event.type });
+            await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "sent", message: event.type });
     }
     catch (error) {
-        await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: new Date().toISOString(), sink: sink.name, status: "failed", message: redactText(error instanceof Error ? error.message : String(error), 1_000) });
+        await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "failed", message: redactText(error instanceof Error ? error.message : String(error), 1_000) });
     }
 }
 //# sourceMappingURL=notifications.js.map

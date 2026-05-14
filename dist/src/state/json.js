@@ -1,7 +1,7 @@
 import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 export async function ensureDir(dir) {
-    await mkdir(dir, { recursive: true });
+    await mkdir(dir, { recursive: true, mode: 0o700 });
 }
 export async function readJsonFile(file) {
     const text = await readFile(file, "utf8");

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -24,6 +24,17 @@ test("creates, lists, gets, and updates goals", async () => {
     assert.equal((await t.store.list()).length, 1);
     await t.store.setState("goal-1", "paused");
     assert.equal((await t.store.get("goal-1")).state, "paused");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("state directories are created with restrictive permissions", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe", schedule: defaultSchedule() });
+    assert.equal((await stat(t.store.paths.worktreesDir)).mode & 0o777, 0o700);
+    assert.equal((await stat(t.store.paths.goalDir("goal-1"))).mode & 0o777, 0o700);
   } finally {
     await t.cleanup();
   }

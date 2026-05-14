@@ -59,8 +59,8 @@ export function createDefaultNotificationSink(): NotificationSink {
 export async function notifyNonFatal(store: GoalStore, sink: NotificationSink, goal: GoalRecord, event: GoalEvent): Promise<void> {
   try {
     await sink.notify(goal, event);
-    if (sink.name !== "noop") await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: new Date().toISOString(), sink: sink.name, status: "sent", message: event.type });
+    if (sink.name !== "noop") await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "sent", message: event.type });
   } catch (error) {
-    await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: new Date().toISOString(), sink: sink.name, status: "failed", message: redactText(error instanceof Error ? error.message : String(error), 1_000) });
+    await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "failed", message: redactText(error instanceof Error ? error.message : String(error), 1_000) });
   }
 }

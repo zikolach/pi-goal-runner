@@ -461,6 +461,20 @@ test("notification failure is nonfatal", async () => {
   }
 });
 
+test("notification events use triggering event timestamp", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    const eventAt = "2026-01-01T12:34:56.000Z";
+    await notifyNonFatal(t.store, { name: "ok", notify: async () => {} }, goal, { type: "progress", goalId: "g", runId: "r", timestamp: eventAt, message: "hi" });
+    await notifyNonFatal(t.store, { name: "bad", notify: async () => { throw new Error("boom"); } }, goal, { type: "progress", goalId: "g", runId: "r", timestamp: eventAt, message: "hi" });
+    const events = (await readFile(t.store.paths.eventsFile("g"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { timestamp: string });
+    assert.deepEqual(events.map((event) => event.timestamp), [eventAt, eventAt]);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("notification command timeout is recorded as nonfatal failure", async () => {
   const t = await tempStore();
   try {
