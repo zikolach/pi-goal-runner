@@ -1,7 +1,18 @@
-import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 export async function ensureDir(dir) {
     await mkdir(dir, { recursive: true, mode: 0o700 });
+    try {
+        await chmod(dir, 0o700);
+    }
+    catch (error) {
+        if (process.platform === "win32" && isNodeError(error) && error.code === "EPERM")
+            return;
+        throw error;
+    }
+}
+function isNodeError(error) {
+    return error instanceof Error && "code" in error;
 }
 export async function readJsonFile(file) {
     const text = await readFile(file, "utf8");

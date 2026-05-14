@@ -43,7 +43,7 @@ test("createOrReuseWorktree creates the worktrees root with restrictive permissi
     await createRepo(repoPath);
     await createOrReuseWorktree(paths, repoPath, worktreePath);
 
-    assert.equal((await stat(paths.worktreesDir)).mode & 0o777, 0o700);
+    if (process.platform !== "win32") assert.equal((await stat(paths.worktreesDir)).mode & 0o777, 0o700);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

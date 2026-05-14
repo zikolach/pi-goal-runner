@@ -63,9 +63,10 @@ export async function schedulerTick(store, options = {}) {
             const message = safeError(error);
             await appendGoalEvent(store.paths, { type: "failure", goalId: goal.id, timestamp: now.toISOString(), message, retryable: true });
             await store.update(goal.id, (current) => {
+                const updatedAt = now.toISOString();
                 const backoff = increaseBackoff(current.schedule.backoff);
-                return { ...current, state: "failed", latestProgress: message, schedule: { ...current.schedule, backoff, nextCheckAt: nextCheckAt(backoff, now) } };
-            });
+                return { ...current, state: "failed", updatedAt, latestProgress: message, schedule: { ...current.schedule, backoff, nextCheckAt: nextCheckAt(backoff, now) } };
+            }, { updatedAt: now.toISOString() });
             result.messages.push(`${goal.id}: ${message}`);
         }
         finally {
@@ -111,9 +112,10 @@ async function checkGoal(store, goal, gh, sink, options) {
     if (options.worker?.dryRun) {
         await store.update(goal.id, (current) => ({
             ...current,
+            updatedAt: now.toISOString(),
             latestProgress: event.message,
             schedule: { ...current.schedule, nextCheckAt: nextCheckAt(current.schedule.backoff, now) },
-        }));
+        }), { updatedAt: now.toISOString() });
         return { launched: true };
     }
     const workerRun = await startWorker(store, worktreeGoal, prompt, {

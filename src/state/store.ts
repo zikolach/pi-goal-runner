@@ -10,7 +10,7 @@ export interface GoalStore {
   create(input: CreateGoalInput): Promise<GoalRecord>;
   list(): Promise<GoalRecord[]>;
   get(goalId: string): Promise<GoalRecord>;
-  update(goalId: string, updater: (goal: GoalRecord) => GoalRecord | Promise<GoalRecord>): Promise<GoalRecord>;
+  update(goalId: string, updater: (goal: GoalRecord) => GoalRecord | Promise<GoalRecord>, options?: { updatedAt?: string }): Promise<GoalRecord>;
   setState(goalId: string, state: GoalState): Promise<GoalRecord>;
 }
 
@@ -60,10 +60,11 @@ export function createGoalStore(root?: string): GoalStore {
       if (goal.schemaVersion !== 1) throw new Error(`Unsupported goal schema for ${goalId}`);
       return goal;
     },
-    async update(goalId, updater) {
+    async update(goalId, updater, options) {
       const current = await this.get(goalId);
       const next = await updater({ ...current, pendingDecisions: [...current.pendingDecisions], runHistory: [...current.runHistory] });
-      const stamped = { ...next, updatedAt: next.updatedAt !== current.updatedAt ? next.updatedAt : new Date().toISOString() };
+      const updatedAt = options?.updatedAt ?? (next.updatedAt !== current.updatedAt ? next.updatedAt : new Date().toISOString());
+      const stamped = { ...next, updatedAt };
       await writeJsonAtomic(paths.stateFile(goalId), stamped);
       return stamped;
     },

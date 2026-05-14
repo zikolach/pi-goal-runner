@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -33,8 +33,23 @@ test("state directories are created with restrictive permissions", async () => {
   const t = await tempStore();
   try {
     await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe", schedule: defaultSchedule() });
+    if (process.platform !== "win32") {
+      assert.equal((await stat(t.store.paths.worktreesDir)).mode & 0o777, 0o700);
+      assert.equal((await stat(t.store.paths.goalDir("goal-1"))).mode & 0o777, 0o700);
+    }
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("existing state directories are tightened to restrictive permissions", async () => {
+  if (process.platform === "win32") return;
+  const t = await tempStore();
+  try {
+    await mkdir(t.store.paths.worktreesDir, { recursive: true });
+    await chmod(t.store.paths.worktreesDir, 0o755);
+    await t.store.init();
     assert.equal((await stat(t.store.paths.worktreesDir)).mode & 0o777, 0o700);
-    assert.equal((await stat(t.store.paths.goalDir("goal-1"))).mode & 0o777, 0o700);
   } finally {
     await t.cleanup();
   }
@@ -116,6 +131,18 @@ test("goal updates preserve explicit updatedAt from updater", async () => {
     await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe", schedule: defaultSchedule(), updatedAt: "2026-01-01T00:00:00.000Z" });
     await t.store.update("goal-1", (goal) => ({ ...goal, summary: "changed", updatedAt: "2026-02-01T00:00:00.000Z" }));
     assert.equal((await t.store.get("goal-1")).updatedAt, "2026-02-01T00:00:00.000Z");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("goal updates can preserve an explicit unchanged updatedAt", async () => {
+  const t = await tempStore();
+  try {
+    const updatedAt = "2026-01-01T00:00:00.000Z";
+    await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe", schedule: defaultSchedule(), updatedAt });
+    await t.store.update("goal-1", (goal) => ({ ...goal, summary: "changed", updatedAt }), { updatedAt });
+    assert.equal((await t.store.get("goal-1")).updatedAt, updatedAt);
   } finally {
     await t.cleanup();
   }

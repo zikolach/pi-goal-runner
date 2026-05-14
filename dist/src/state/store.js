@@ -48,10 +48,11 @@ export function createGoalStore(root) {
                 throw new Error(`Unsupported goal schema for ${goalId}`);
             return goal;
         },
-        async update(goalId, updater) {
+        async update(goalId, updater, options) {
             const current = await this.get(goalId);
             const next = await updater({ ...current, pendingDecisions: [...current.pendingDecisions], runHistory: [...current.runHistory] });
-            const stamped = { ...next, updatedAt: next.updatedAt !== current.updatedAt ? next.updatedAt : new Date().toISOString() };
+            const updatedAt = options?.updatedAt ?? (next.updatedAt !== current.updatedAt ? next.updatedAt : new Date().toISOString());
+            const stamped = { ...next, updatedAt };
             await writeJsonAtomic(paths.stateFile(goalId), stamped);
             return stamped;
         },

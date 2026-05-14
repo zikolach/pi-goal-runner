@@ -75,6 +75,7 @@ test("scheduler catch block applies retry backoff with injected time", async () 
     const updated = await t.store.get("g");
     assert.equal(result.failures, 1);
     assert.equal(updated.state, "failed");
+    assert.equal(updated.updatedAt, "2026-01-01T00:00:00.000Z");
     assert.equal(updated.schedule.backoff.currentMs, 120_000);
     assert.equal(updated.schedule.nextCheckAt, "2026-01-01T00:02:00.000Z");
   } finally {
@@ -106,6 +107,7 @@ test("scheduler dry-run launch defers next check to avoid repeated launch intent
     const updated = await t.store.get("g");
     assert.equal(result.launched, 1);
     assert.equal(updated.state, "active");
+    assert.equal(updated.updatedAt, "2026-01-01T00:00:00.000Z");
     assert.equal(updated.schedule.nextCheckAt, "2026-01-01T00:01:00.000Z");
     assert.match(updated.latestProgress ?? "", /Launching worker/);
 
