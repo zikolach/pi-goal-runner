@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { defaultSchedule } from "../src/policy.js";
-import { selectDueGoals, schedulerTick } from "../src/scheduler.js";
+import { handleSuccessfulWorkerComplete, selectDueGoals, schedulerTick } from "../src/scheduler.js";
 import { ingestWorkerEvent, launchWorker } from "../src/worker/subprocess.js";
 import { createDefaultNotificationSink, notifyNonFatal } from "../src/notifications.js";
 
@@ -53,6 +53,24 @@ test("worker event ingestion records decisions, completion, failures", async () 
     assert.equal((await t.store.get("g")).lastRunSummary, "done");
     await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "quiet", summary: "quiet" });
     assert.equal((await t.store.get("g")).state, "completed");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker success completion invokes completion callback", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    let completed = false;
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "console.log(JSON.stringify({type:'complete', status:'success', summary:'done', commitSha:'abc'}));"],
+      onComplete: async () => {
+        completed = true;
+      },
+    });
+    assert.equal(completed, true);
   } finally {
     await t.cleanup();
   }
@@ -123,6 +141,48 @@ test("stale completion does not advance handled timestamps", async () => {
     const updated = await t.store.get("g");
     assert.equal(updated.github?.lastHandledAt, "2026-01-01T00:00:01Z");
     assert.deepEqual(updated.github?.handledThreadIds, ["t1"]);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("successful worker completion auto replies and resolves when enabled", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: true, handledThreadIds: [], handledCheckNames: [] },
+    });
+    const calls: string[][] = [];
+    const gh = { run: async (args: string[]) => { calls.push(args); return "{}"; } };
+    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc", addressedThreadIds: ["t1"] });
+    assert.equal(calls.some((args) => args.join(" ").includes("addPullRequestReviewThreadReply")), true);
+    assert.equal(calls.some((args) => args.join(" ").includes("resolveReviewThread")), true);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("auto reply and resolve failures are nonfatal events", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: true, handledThreadIds: [], handledCheckNames: [] },
+    });
+    const gh = { run: async () => { throw new Error("boom"); } };
+    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc", addressedThreadIds: ["t1"] });
+    const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
+    assert.match(events, /Auto-reply\/resolve failed/);
+    assert.equal((await t.store.get("g")).state, "active");
   } finally {
     await t.cleanup();
   }

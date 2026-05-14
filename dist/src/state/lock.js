@@ -49,9 +49,11 @@ async function isStale(lockPath, staleMs) {
     }
 }
 async function isLockDirStale(lockPath, staleMs) {
+    if (staleMs <= 0)
+        return true;
     try {
         const info = await stat(lockPath);
-        return Date.now() - info.mtimeMs > staleMs;
+        return Date.now() - info.mtimeMs >= staleMs;
     }
     catch {
         return true;

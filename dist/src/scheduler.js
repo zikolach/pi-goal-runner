@@ -3,6 +3,7 @@ import { acquireGoalLock } from "./state/lock.js";
 import { applyActionablePolicy, applyNoActionPolicy, isDue, isTerminal, nextCheckAt } from "./policy.js";
 import { createGhExecutor } from "./github/gh.js";
 import { findActionable, observeGithubPr } from "./github/observe.js";
+import { replyAndResolveAddressedThreads } from "./github/update.js";
 import { buildWorkerPrompt } from "./worker/prompt.js";
 import { ensureGoalWorktree } from "./worker/worktree.js";
 import { launchWorker } from "./worker/subprocess.js";
@@ -87,7 +88,36 @@ async function checkGoal(store, goal, gh, sink, options) {
     await notifyNonFatal(store, sink, worktreeGoal, event);
     if (options.worker?.dryRun)
         return true;
-    await launchWorker(store, worktreeGoal, prompt, options.worker);
+    await launchWorker(store, worktreeGoal, prompt, {
+        ...options.worker,
+        onComplete: async (completeEvent) => handleSuccessfulWorkerComplete(store, gh, worktreeGoal, completeEvent),
+    });
     return true;
+}
+export async function handleSuccessfulWorkerComplete(store, gh, goal, event) {
+    if (!goal.github || !goal.github.autoReplyAndResolve)
+        return;
+    try {
+        const resolvedThreadIds = await replyAndResolveAddressedThreads(gh, goal.github, event);
+        if (resolvedThreadIds.length > 0) {
+            await appendGoalEvent(store.paths, {
+                type: "diagnostic",
+                goalId: goal.id,
+                runId: event.runId,
+                timestamp: new Date().toISOString(),
+                message: `Auto-replied and resolved ${resolvedThreadIds.length} GitHub review thread(s)`,
+            });
+        }
+    }
+    catch (error) {
+        await appendGoalEvent(store.paths, {
+            type: "failure",
+            goalId: goal.id,
+            runId: event.runId,
+            timestamp: new Date().toISOString(),
+            message: `Auto-reply/resolve failed: ${safeError(error)}`,
+            retryable: true,
+        });
+    }
 }
 //# sourceMappingURL=scheduler.js.map

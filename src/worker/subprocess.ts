@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { appendGoalEvent, parseWorkerEventLine } from "../state/events.js";
 import type { GoalStore } from "../state/store.js";
-import type { FailureEvent, GoalEvent, GoalRecord, RunSummary } from "../types.js";
+import type { CompleteEvent, FailureEvent, GoalEvent, GoalRecord, RunSummary } from "../types.js";
 import { addPendingDecision } from "../decisions.js";
 import { redactText } from "../redaction.js";
 
@@ -11,6 +11,7 @@ export interface WorkerLaunchOptions {
   cwd?: string;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  onComplete?: (event: CompleteEvent) => Promise<void>;
 }
 
 export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: string, options: WorkerLaunchOptions = {}): Promise<GoalRecord> {
@@ -32,7 +33,10 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
     let ingestionQueue: Promise<void> = Promise.resolve();
     const enqueueEvent = (event: GoalEvent, forcedStatus?: RunSummary["status"]) => {
       if (event.type === "complete" || event.type === "failure" || event.type === "decision") terminalEventSeen = true;
-      ingestionQueue = ingestionQueue.then(() => ingestWorkerEvent(store, goal.id, runId, event, forcedStatus));
+      ingestionQueue = ingestionQueue.then(async () => {
+        await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
+        if (event.type === "complete" && event.status === "success") await options.onComplete?.(event);
+      });
       ingestionQueue.catch(() => undefined);
       return ingestionQueue;
     };

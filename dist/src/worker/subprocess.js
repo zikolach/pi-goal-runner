@@ -22,7 +22,11 @@ export async function launchWorker(store, goal, prompt, options = {}) {
         const enqueueEvent = (event, forcedStatus) => {
             if (event.type === "complete" || event.type === "failure" || event.type === "decision")
                 terminalEventSeen = true;
-            ingestionQueue = ingestionQueue.then(() => ingestWorkerEvent(store, goal.id, runId, event, forcedStatus));
+            ingestionQueue = ingestionQueue.then(async () => {
+                await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
+                if (event.type === "complete" && event.status === "success")
+                    await options.onComplete?.(event);
+            });
             ingestionQueue.catch(() => undefined);
             return ingestionQueue;
         };

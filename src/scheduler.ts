@@ -1,10 +1,11 @@
-import type { ActionableObservation, GithubObservation, GoalRecord, SchedulerResult } from "./types.js";
+import type { ActionableObservation, CompleteEvent, GithubObservation, GoalRecord, SchedulerResult } from "./types.js";
 import type { GoalStore } from "./state/store.js";
 import { appendGoalEvent } from "./state/events.js";
 import { acquireGoalLock } from "./state/lock.js";
 import { applyActionablePolicy, applyNoActionPolicy, isDue, isTerminal, nextCheckAt } from "./policy.js";
 import { createGhExecutor, type GhExecutor } from "./github/gh.js";
 import { findActionable, observeGithubPr } from "./github/observe.js";
+import { replyAndResolveAddressedThreads } from "./github/update.js";
 import { buildWorkerPrompt } from "./worker/prompt.js";
 import { ensureGoalWorktree } from "./worker/worktree.js";
 import { launchWorker, type WorkerLaunchOptions } from "./worker/subprocess.js";
@@ -90,6 +91,34 @@ async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sin
   await appendGoalEvent(store.paths, event);
   await notifyNonFatal(store, sink, worktreeGoal, event);
   if (options.worker?.dryRun) return true;
-  await launchWorker(store, worktreeGoal, prompt, options.worker);
+  await launchWorker(store, worktreeGoal, prompt, {
+    ...options.worker,
+    onComplete: async (completeEvent) => handleSuccessfulWorkerComplete(store, gh, worktreeGoal, completeEvent),
+  });
   return true;
+}
+
+export async function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExecutor, goal: GoalRecord, event: CompleteEvent): Promise<void> {
+  if (!goal.github || !goal.github.autoReplyAndResolve) return;
+  try {
+    const resolvedThreadIds = await replyAndResolveAddressedThreads(gh, goal.github, event);
+    if (resolvedThreadIds.length > 0) {
+      await appendGoalEvent(store.paths, {
+        type: "diagnostic",
+        goalId: goal.id,
+        runId: event.runId,
+        timestamp: new Date().toISOString(),
+        message: `Auto-replied and resolved ${resolvedThreadIds.length} GitHub review thread(s)`,
+      });
+    }
+  } catch (error) {
+    await appendGoalEvent(store.paths, {
+      type: "failure",
+      goalId: goal.id,
+      runId: event.runId,
+      timestamp: new Date().toISOString(),
+      message: `Auto-reply/resolve failed: ${safeError(error)}`,
+      retryable: true,
+    });
+  }
 }
