@@ -11,6 +11,14 @@ test("daemon interval rejects timer-clamped tight-loop values", () => {
   assert.throws(() => parseDaemonInterval("-1"), /between 1000/);
   assert.throws(() => parseDaemonInterval("nope"), /between 1000/);
   assert.throws(() => parseDaemonInterval(String(MAX_DAEMON_INTERVAL_MS + 1)), /between 1000/);
+  assert.throws(
+    () => parseDaemonInterval("0"),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.doesNotMatch(error.message, /daemon mode/i);
+      return true;
+    },
+  );
 });
 
 test("generated cli declarations do not include a shebang", async () => {

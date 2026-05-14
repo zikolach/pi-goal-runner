@@ -27,7 +27,7 @@ export const MAX_DAEMON_INTERVAL_MS = 2_147_483_647;
 export function parseDaemonInterval(value) {
     const intervalMs = Number(value ?? "60000");
     if (!Number.isFinite(intervalMs) || intervalMs < 1_000 || intervalMs > MAX_DAEMON_INTERVAL_MS) {
-        throw new Error(`PI_GOAL_RUNNER_INTERVAL_MS must be a number between 1000 and ${MAX_DAEMON_INTERVAL_MS} for daemon mode`);
+        throw new Error(`PI_GOAL_RUNNER_INTERVAL_MS must be a number between 1000 and ${MAX_DAEMON_INTERVAL_MS} milliseconds`);
     }
     return intervalMs;
 }

@@ -1,6 +1,8 @@
 import { appendFile } from "node:fs/promises";
 import { redactObject, redactText } from "../redaction.js";
 import { ensureDir } from "./json.js";
+const MAX_ADDRESSED_THREAD_IDS = 50;
+const MAX_ADDRESSED_THREAD_ID_LENGTH = 120;
 function nowIso() {
     return new Date().toISOString();
 }
@@ -46,7 +48,7 @@ export function normalizeWorkerEvent(goalId, runId, raw) {
             summary: redactText(event.summary ?? "Worker completed", 2_000),
             commitSha: typeof event.commitSha === "string" ? redactText(event.commitSha, 80) : undefined,
             validationResults: Array.isArray(event.validationResults) ? redactObject(event.validationResults, 1_000) : undefined,
-            addressedThreadIds: Array.isArray(event.addressedThreadIds) ? event.addressedThreadIds.map(String) : undefined,
+            addressedThreadIds: normalizeAddressedThreadIds(event.addressedThreadIds),
         };
     }
     if (type === "failure") {
@@ -72,6 +74,22 @@ function normalizeDecisionOptions(options) {
             label: redactText(item.label ?? "", 120),
         };
     });
+}
+function normalizeAddressedThreadIds(value) {
+    if (!Array.isArray(value))
+        return undefined;
+    const ids = [];
+    const seen = new Set();
+    for (const rawId of value.slice(0, MAX_ADDRESSED_THREAD_IDS)) {
+        if (typeof rawId !== "string")
+            continue;
+        const id = redactText(rawId, MAX_ADDRESSED_THREAD_ID_LENGTH).trim();
+        if (!id || seen.has(id))
+            continue;
+        seen.add(id);
+        ids.push(id);
+    }
+    return ids.length ? ids : undefined;
 }
 export function parseWorkerEventLine(goalId, runId, line) {
     try {
