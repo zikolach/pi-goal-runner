@@ -21,6 +21,7 @@ export interface StartedWorkerRun {
   done: Promise<GoalRecord>;
 }
 
+export const DEFAULT_WORKER_TIMEOUT_MS = 45 * 60_000;
 export const MAX_WORKER_STDOUT_BUFFER_CHARS = 64 * 1024;
 
 export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: string, options: WorkerLaunchOptions = {}): Promise<GoalRecord> {
@@ -35,7 +36,7 @@ export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: st
   const command = options.command ?? process.env.PI_GOAL_WORKER_COMMAND ?? "pi";
   const args = options.args ?? workerArgsFromEnv();
   const cwd = options.cwd ?? goal.github?.repository.worktreePath ?? goal.cwd ?? process.cwd();
-  const timeoutMs = options.timeoutMs ?? 45 * 60_000;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
   const done = new Promise<GoalRecord>((resolve) => {
     const childEnv = { ...process.env, ...options.env };
     delete childEnv.PI_GOAL_PROMPT;

@@ -4,6 +4,7 @@ import { addPendingDecision } from "../decisions.js";
 import { redactText } from "../redaction.js";
 import { increaseBackoff, nextCheckAt } from "../policy.js";
 import { splitArgs } from "../args.js";
+export const DEFAULT_WORKER_TIMEOUT_MS = 45 * 60_000;
 export const MAX_WORKER_STDOUT_BUFFER_CHARS = 64 * 1024;
 export async function launchWorker(store, goal, prompt, options = {}) {
     const run = await startWorker(store, goal, prompt, options);
@@ -16,7 +17,7 @@ export async function startWorker(store, goal, prompt, options = {}) {
     const command = options.command ?? process.env.PI_GOAL_WORKER_COMMAND ?? "pi";
     const args = options.args ?? workerArgsFromEnv();
     const cwd = options.cwd ?? goal.github?.repository.worktreePath ?? goal.cwd ?? process.cwd();
-    const timeoutMs = options.timeoutMs ?? 45 * 60_000;
+    const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
     const done = new Promise((resolve) => {
         const childEnv = { ...process.env, ...options.env };
         delete childEnv.PI_GOAL_PROMPT;

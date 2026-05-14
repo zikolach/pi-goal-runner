@@ -9,7 +9,9 @@ export interface GoalLock {
   release(): Promise<void>;
 }
 
-export async function acquireGoalLock(paths: StatePaths, goalId: string, staleMs = 30 * 60_000): Promise<GoalLock | undefined> {
+export const DEFAULT_GOAL_LOCK_STALE_MS = 50 * 60_000;
+
+export async function acquireGoalLock(paths: StatePaths, goalId: string, staleMs = DEFAULT_GOAL_LOCK_STALE_MS): Promise<GoalLock | undefined> {
   const lockPath = paths.lockDir(goalId);
   await ensureDir(paths.goalDir(goalId));
   try {
@@ -45,13 +47,24 @@ export async function withGoalLock<T>(paths: StatePaths, goalId: string, fn: () 
 async function isStale(lockPath: string, staleMs: number): Promise<boolean> {
   try {
     const text = await readFile(path.join(lockPath, "owner.json"), "utf8");
-    const parsed = JSON.parse(text) as { createdAt?: string };
+    const parsed = JSON.parse(text) as { createdAt?: string; pid?: number };
+    if (isPidAlive(parsed.pid)) return false;
     if (!parsed.createdAt) return isLockDirStale(lockPath, staleMs);
     const createdAtMs = new Date(parsed.createdAt).getTime();
     if (!Number.isFinite(createdAtMs)) return isLockDirStale(lockPath, staleMs);
     return Date.now() - createdAtMs > staleMs;
   } catch {
     return isLockDirStale(lockPath, staleMs);
+  }
+}
+
+function isPidAlive(pid: unknown): boolean {
+  if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
 

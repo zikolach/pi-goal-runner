@@ -11,6 +11,7 @@ export interface SchedulerOptions {
     };
     now?: Date;
 }
+export declare const WORKER_LOCK_STALE_BUFFER_MS: number;
 export declare function selectDueGoals(store: GoalStore, now?: Date): Promise<GoalRecord[]>;
 export declare function skipReason(goal: GoalRecord, now?: Date): string | undefined;
 export declare function schedulerTick(store: GoalStore, options?: SchedulerOptions): Promise<SchedulerResult>;

@@ -5,10 +5,11 @@ import path from "node:path";
 import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { appendGoalEvent, parseWorkerEventLine } from "../src/state/events.js";
-import { acquireGoalLock } from "../src/state/lock.js";
+import { acquireGoalLock, DEFAULT_GOAL_LOCK_STALE_MS } from "../src/state/lock.js";
 import { writeJsonAtomic } from "../src/state/json.js";
 import { sanitizeGoalId } from "../src/state/paths.js";
 import { applyNoActionPolicy, defaultSchedule, increaseBackoff, quietWindowExpired } from "../src/policy.js";
+import { DEFAULT_WORKER_TIMEOUT_MS } from "../src/worker/subprocess.js";
 import { redactText } from "../src/redaction.js";
 
 async function tempStore() {
@@ -160,6 +161,10 @@ test("redaction tolerates values that JSON cannot serialize", () => {
   assert.equal(redactText(circular), "[object Object]");
 });
 
+test("default lock staleness exceeds the default worker timeout", () => {
+  assert.ok(DEFAULT_GOAL_LOCK_STALE_MS > DEFAULT_WORKER_TIMEOUT_MS);
+});
+
 test("per-goal locks exclude concurrent holders", async () => {
   const t = await tempStore();
   try {
@@ -170,6 +175,19 @@ test("per-goal locks exclude concurrent holders", async () => {
     assert.equal(second, undefined);
     await first.release();
     assert.ok(await acquireGoalLock(t.store.paths, "goal-1"));
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("locks owned by a live pid are not treated as stale", async () => {
+  const t = await tempStore();
+  try {
+    const lockDir = t.store.paths.lockDir("goal-1");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(path.join(lockDir, "owner.json"), JSON.stringify({ pid: process.pid, createdAt: "1970-01-01T00:00:00.000Z" }), "utf8");
+    const recovered = await acquireGoalLock(t.store.paths, "goal-1", 0);
+    assert.equal(recovered, undefined);
   } finally {
     await t.cleanup();
   }
@@ -192,7 +210,7 @@ test("stale locks recover when owner metadata has an invalid createdAt", async (
   try {
     const lockDir = t.store.paths.lockDir("goal-1");
     await mkdir(lockDir, { recursive: true });
-    await writeFile(path.join(lockDir, "owner.json"), JSON.stringify({ pid: 123, createdAt: "not-a-date" }), "utf8");
+    await writeFile(path.join(lockDir, "owner.json"), JSON.stringify({ pid: 999999999, createdAt: "not-a-date" }), "utf8");
     const recovered = await acquireGoalLock(t.store.paths, "goal-1", 0);
     assert.ok(recovered);
     await recovered.release();

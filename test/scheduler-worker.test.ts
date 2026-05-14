@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -113,6 +113,33 @@ test("scheduler dry-run launch defers next check to avoid repeated launch intent
 
     const repeatResult = await schedulerTick(t.store, { gh, now, worker: { dryRun: true } });
     assert.equal(repeatResult.launched, 0);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("scheduler lock staleness follows configured worker timeout", async () => {
+  const t = await tempStore();
+  try {
+    const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
+    await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule,
+      cwd: process.cwd(),
+      github: { repository: { owner: "o", repo: "r", localPath: process.cwd(), worktreePath: process.cwd() }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+    const lockDir = t.store.paths.lockDir("g");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(path.join(lockDir, "owner.json"), JSON.stringify({ pid: 999999999, createdAt: new Date(Date.now() - 60 * 60_000).toISOString() }), "utf8");
+    let ghCalls = 0;
+    const gh = { run: async () => { ghCalls++; return "{}"; } };
+    const result = await schedulerTick(t.store, { gh, now: new Date(), worker: { dryRun: true, timeoutMs: 2 * 60 * 60_000 } });
+    assert.equal(result.launched, 0);
+    assert.equal(result.skipped, 1);
+    assert.equal(ghCalls, 0);
   } finally {
     await t.cleanup();
   }

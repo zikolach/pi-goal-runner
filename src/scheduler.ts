@@ -8,7 +8,7 @@ import { findActionable, observeGithubPr } from "./github/observe.js";
 import { replyAndResolveAddressedThreads } from "./github/update.js";
 import { buildWorkerPrompt } from "./worker/prompt.js";
 import { ensureGoalWorktree } from "./worker/worktree.js";
-import { startWorker, type WorkerLaunchOptions } from "./worker/subprocess.js";
+import { DEFAULT_WORKER_TIMEOUT_MS, startWorker, type WorkerLaunchOptions } from "./worker/subprocess.js";
 import { createDefaultNotificationSink, notifyNonFatal, type NotificationSink } from "./notifications.js";
 import { safeError } from "./redaction.js";
 
@@ -18,6 +18,8 @@ export interface SchedulerOptions {
   worker?: WorkerLaunchOptions & { dryRun?: boolean };
   now?: Date;
 }
+
+export const WORKER_LOCK_STALE_BUFFER_MS = 5 * 60_000;
 
 export async function selectDueGoals(store: GoalStore, now = new Date()): Promise<GoalRecord[]> {
   const goals = await store.list();
@@ -48,7 +50,7 @@ export async function schedulerTick(store: GoalStore, options: SchedulerOptions 
       continue;
     }
     result.checked++;
-    const lock = await acquireGoalLock(store.paths, goal.id);
+    const lock = await acquireGoalLock(store.paths, goal.id, schedulerLockStaleMs(options.worker));
     if (!lock) {
       result.skipped++;
       result.messages.push(`${goal.id}: already running`);
@@ -82,6 +84,12 @@ export async function schedulerTick(store: GoalStore, options: SchedulerOptions 
 interface CheckGoalResult {
   launched: boolean;
   workerDone?: Promise<GoalRecord>;
+}
+
+function schedulerLockStaleMs(worker: SchedulerOptions["worker"]): number {
+  const timeoutMs = worker?.timeoutMs;
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs < 0) return DEFAULT_WORKER_TIMEOUT_MS + WORKER_LOCK_STALE_BUFFER_MS;
+  return timeoutMs + WORKER_LOCK_STALE_BUFFER_MS;
 }
 
 function releaseLockAfterWorker(workerDone: Promise<GoalRecord>, release: () => Promise<void>): void {
