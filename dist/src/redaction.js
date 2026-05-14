@@ -6,7 +6,7 @@ const SECRET_PATTERNS = [
 ];
 const PREFIXED_SECRET_PATTERNS = [
     /([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY)[A-Z0-9_]*=)([^\s]+)/gi,
-    /(Authorization:\s*(?:Bearer|token)\s+)([^\s]+)/gi,
+    /(Authorization:\s*(?:Bearer|token)\s+)([^\s'"`]+)/gi,
 ];
 export const DEFAULT_MAX_TEXT = 4_000;
 export function redactText(input, maxLength = DEFAULT_MAX_TEXT) {

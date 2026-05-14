@@ -53,6 +53,24 @@ test("rejects fork PRs when creating a goal", async () => {
   }
 });
 
+test("redacts validation commands before persisting PR goals", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
+  try {
+    const store = createGoalStore(dir);
+    const gh: GhExecutor = {
+      run: async (args) => {
+        if (args[0] === "auth") return "";
+        return JSON.stringify({ url: "u", headRefName: "feature", baseRefName: "main", headRepositoryOwner: { login: "owner" } });
+      },
+    };
+    const goal = await createGithubPrGoal(store, gh, "owner/repo", "1", { validationCommands: ["TOKEN=ghp_abcdefghijklmnopqrstuvwxyz npm test", "curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz'"] });
+    assert.deepEqual(goal.github?.validationCommands, ["TOKEN=[REDACTED] npm test", "curl -H 'Authorization: Bearer [REDACTED]'"]);
+    assert.deepEqual((await store.get(goal.id)).github?.validationCommands, goal.github?.validationCommands);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("validates schedule overrides when creating a goal", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
   try {

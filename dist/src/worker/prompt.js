@@ -4,6 +4,7 @@ export function buildWorkerPrompt(goal, observation, actionable) {
         throw new Error("Worker prompt requires GitHub PR goal config");
     const repo = `${goal.github.repository.owner}/${goal.github.repository.repo}`;
     const previous = goal.runHistory.at(-1)?.summary ?? goal.lastRunSummary ?? "No previous run.";
+    const validationCommands = redactText(goal.github.validationCommands.join(", "), 2_000) || "none configured";
     return `You are a Pi worker subprocess for a durable GitHub PR review goal.
 
 Goal:
@@ -13,7 +14,7 @@ Goal:
 - Branch: ${goal.github.repository.branch ?? observation.headBranch ?? "unknown"}
 - Worktree: ${goal.github.repository.worktreePath ?? "not assigned"}
 - Quiet window: ${goal.schedule.quietWindow.durationMs}ms
-- Validation commands: ${goal.github.validationCommands.join(", ") || "none configured"}
+- Validation commands: ${validationCommands}
 
 Fresh observation (${observation.observedAt}):
 ${redactText(JSON.stringify({ headSha: observation.headSha, actionable }, null, 2), 8_000)}

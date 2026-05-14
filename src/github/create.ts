@@ -1,6 +1,7 @@
 import type { GoalRecord, GithubPrGoalConfig } from "../types.js";
 import { createGoalId, type GoalStore } from "../state/store.js";
 import { defaultSchedule } from "../policy.js";
+import { redactText } from "../redaction.js";
 import type { GhExecutor } from "./gh.js";
 import { ensureGhAuth, parsePr } from "./gh.js";
 
@@ -46,7 +47,7 @@ export async function createGithubPrGoal(store: GoalStore, gh: GhExecutor, repoO
     },
     prNumber: parsed.prNumber,
     prUrl: typeof pr.url === "string" ? pr.url : parsed.prUrl,
-    validationCommands: options.validationCommands ?? ["npm test"],
+    validationCommands: sanitizeValidationCommands(options.validationCommands ?? ["npm test"]),
     autoReplyAndResolve: options.autoReplyAndResolve ?? false,
     handledThreadIds: [],
     handledCheckNames: [],
@@ -60,6 +61,10 @@ export async function createGithubPrGoal(store: GoalStore, gh: GhExecutor, repoO
     schedule,
     github,
   });
+}
+
+function sanitizeValidationCommands(commands: string[]): string[] {
+  return commands.map((command) => redactText(command, 1_000));
 }
 
 function readOwnerLogin(owner: unknown): string | undefined {

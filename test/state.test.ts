@@ -152,6 +152,7 @@ test("goal updates can preserve an explicit unchanged updatedAt", async () => {
 test("redaction does not leak regex offsets for token patterns", () => {
   assert.equal(redactText("token ghp_1234567890123456789012345"), "token [REDACTED]");
   assert.equal(redactText("API_TOKEN=secret-value"), "API_TOKEN=[REDACTED]");
+  assert.equal(redactText("curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz'"), "curl -H 'Authorization: Bearer [REDACTED]'");
 });
 
 test("redaction tolerates values that JSON cannot serialize", () => {

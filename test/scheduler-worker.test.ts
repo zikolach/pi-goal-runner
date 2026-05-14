@@ -147,6 +147,35 @@ test("scheduler dry-run launch defers next check to avoid repeated launch intent
   }
 });
 
+test("scheduler recovers running goals when worker lock is missing", async () => {
+  const t = await tempStore();
+  try {
+    const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
+    await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "running",
+      summary: "g",
+      schedule,
+      runHistory: [{ id: "r", startedAt: "2026-01-01T00:00:00.000Z", status: "running" }],
+      github: { repository: { owner: "o", repo: "r", localPath: process.cwd(), worktreePath: process.cwd() }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+    let ghCalls = 0;
+    const gh = { run: async () => { ghCalls++; return "{}"; } };
+    const result = await schedulerTick(t.store, { gh, now: new Date("2026-01-01T00:01:00Z"), worker: { dryRun: true } });
+    const updated = await t.store.get("g");
+    assert.equal(result.failures, 1);
+    assert.equal(result.launched, 0);
+    assert.equal(ghCalls, 0);
+    assert.equal(updated.state, "failed");
+    assert.equal(updated.runHistory.at(-1)?.status, "failed");
+    assert.equal(updated.runHistory.at(-1)?.completedAt, "2026-01-01T00:01:00.000Z");
+    assert.equal(updated.schedule.nextCheckAt, "2026-01-01T00:03:00.000Z");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("scheduler lock staleness follows configured worker timeout", async () => {
   const t = await tempStore();
   try {

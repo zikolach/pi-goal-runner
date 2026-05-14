@@ -7,7 +7,7 @@ const SECRET_PATTERNS: RegExp[] = [
 
 const PREFIXED_SECRET_PATTERNS: RegExp[] = [
   /([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY)[A-Z0-9_]*=)([^\s]+)/gi,
-  /(Authorization:\s*(?:Bearer|token)\s+)([^\s]+)/gi,
+  /(Authorization:\s*(?:Bearer|token)\s+)([^\s'"`]+)/gi,
 ];
 
 export const DEFAULT_MAX_TEXT = 4_000;

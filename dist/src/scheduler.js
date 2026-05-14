@@ -17,8 +17,6 @@ export async function selectDueGoals(store, now = new Date()) {
 export function skipReason(goal, now = new Date()) {
     if (isTerminal(goal.state))
         return `terminal state ${goal.state}`;
-    if (goal.state === "running")
-        return "already running";
     if (goal.state === "paused")
         return "paused";
     if (goal.state === "needs_decision")
@@ -51,6 +49,24 @@ export async function schedulerTick(store, options = {}) {
         }
         let releaseLock = true;
         try {
+            if (goal.state === "running") {
+                result.failures++;
+                const message = "Recovered abandoned running goal after missing or stale worker lock";
+                await appendGoalEvent(store.paths, { type: "failure", goalId: goal.id, timestamp: now.toISOString(), message, retryable: true });
+                await store.update(goal.id, (current) => {
+                    const backoff = increaseBackoff(current.schedule.backoff);
+                    return {
+                        ...current,
+                        state: "failed",
+                        updatedAt: now.toISOString(),
+                        latestProgress: message,
+                        runHistory: current.runHistory.map((run, index) => index === current.runHistory.length - 1 && run.status === "running" ? { ...run, completedAt: now.toISOString(), status: "failed", summary: message } : run),
+                        schedule: { ...current.schedule, backoff, nextCheckAt: nextCheckAt(backoff, now) },
+                    };
+                }, { updatedAt: now.toISOString() });
+                result.messages.push(`${goal.id}: ${message}`);
+                continue;
+            }
             const outcome = await checkGoal(store, goal, gh, sink, options);
             if (outcome.launched)
                 result.launched++;
