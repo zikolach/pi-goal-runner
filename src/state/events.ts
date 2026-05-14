@@ -26,7 +26,7 @@ export function normalizeWorkerEvent(goalId: string, runId: string | undefined, 
       runId,
       timestamp: nowIso(),
       decision: {
-        id: String(decisionRaw?.id ?? event.id ?? `decision-${Date.now()}`),
+        id: redactText(decisionRaw?.id ?? event.id ?? `decision-${Date.now()}`, 120),
         goalId,
         runId,
         prompt: redactText(decisionRaw?.prompt ?? event.prompt ?? "Decision required", 2_000),

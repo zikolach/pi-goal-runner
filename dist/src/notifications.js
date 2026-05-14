@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { appendGoalEvent } from "./state/events.js";
 import { redactText } from "./redaction.js";
+import { splitArgs } from "./args.js";
 const execFileAsync = promisify(execFile);
 const DEFAULT_NOTIFICATION_TIMEOUT_MS = 30_000;
 export class NoopNotificationSink {
@@ -30,10 +31,10 @@ export class CommandNotificationSink {
 }
 export function createDefaultNotificationSink() {
     if (process.env.PI_GOAL_NOTIFY_COMMAND) {
-        return new CommandNotificationSink(process.env.PI_GOAL_NOTIFY_COMMAND, process.env.PI_GOAL_NOTIFY_ARGS?.split(" ").filter(Boolean) ?? [], "command");
+        return new CommandNotificationSink(process.env.PI_GOAL_NOTIFY_COMMAND, process.env.PI_GOAL_NOTIFY_ARGS ? splitArgs(process.env.PI_GOAL_NOTIFY_ARGS).filter(Boolean) : [], "command");
     }
     if (process.env.PIRELAY_NOTIFY_COMMAND) {
-        return new CommandNotificationSink(process.env.PIRELAY_NOTIFY_COMMAND, process.env.PIRELAY_NOTIFY_ARGS?.split(" ").filter(Boolean) ?? [], "pirelay");
+        return new CommandNotificationSink(process.env.PIRELAY_NOTIFY_COMMAND, process.env.PIRELAY_NOTIFY_ARGS ? splitArgs(process.env.PIRELAY_NOTIFY_ARGS).filter(Boolean) : [], "pirelay");
     }
     return new NoopNotificationSink();
 }

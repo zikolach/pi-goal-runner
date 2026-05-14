@@ -5,6 +5,7 @@ import type { GoalStore } from "./state/store.js";
 export function addPendingDecision(goal: GoalRecord, decision: DecisionRecord): GoalRecord {
   const safe: DecisionRecord = {
     ...decision,
+    id: redactText(decision.id, 120),
     prompt: redactText(decision.prompt, 2_000),
     options: decision.options.map((option) => ({ id: redactText(option.id, 80), label: redactText(option.label, 120) })),
     status: "pending",

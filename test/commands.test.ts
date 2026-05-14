@@ -14,6 +14,7 @@ async function tempStore() {
 
 test("splitArgs handles quotes", () => {
   assert.deepEqual(splitArgs('watch-pr owner/repo 1 --validation "npm test"'), ["watch-pr", "owner/repo", "1", "--validation", "npm test"]);
+  assert.deepEqual(splitArgs("--foo 'two words' --bar"), ["--foo", "two words", "--bar"]);
 });
 
 test("list/status/pause/resume/cancel commands produce safe output", async () => {

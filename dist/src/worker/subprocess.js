@@ -3,6 +3,7 @@ import { appendGoalEvent, parseWorkerEventLine } from "../state/events.js";
 import { addPendingDecision } from "../decisions.js";
 import { redactText } from "../redaction.js";
 import { increaseBackoff, nextCheckAt } from "../policy.js";
+import { splitArgs } from "../args.js";
 export async function launchWorker(store, goal, prompt, options = {}) {
     const runId = `run-${Date.now().toString(36)}`;
     const run = { id: runId, startedAt: new Date().toISOString(), status: "running" };
@@ -156,7 +157,7 @@ function updateGithubHandledState(goal, event) {
 function workerArgsFromEnv() {
     const configured = process.env.PI_GOAL_WORKER_ARGS;
     if (configured)
-        return configured.split(" ").filter(Boolean);
+        return splitArgs(configured).filter(Boolean);
     return ["--print"];
 }
 //# sourceMappingURL=subprocess.js.map

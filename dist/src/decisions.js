@@ -2,6 +2,7 @@ import { redactText } from "./redaction.js";
 export function addPendingDecision(goal, decision) {
     const safe = {
         ...decision,
+        id: redactText(decision.id, 120),
         prompt: redactText(decision.prompt, 2_000),
         options: decision.options.map((option) => ({ id: redactText(option.id, 80), label: redactText(option.label, 120) })),
         status: "pending",

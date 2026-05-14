@@ -76,6 +76,21 @@ test("worker event ingestion records decisions, completion, failures", async () 
   }
 });
 
+test("worker decision ids are redacted and length-limited before persisting", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    const unsafeId = `decision-ghp_${"a".repeat(24)}-${"x".repeat(200)}`;
+    await ingestWorkerEvent(t.store, "g", "r", { type: "decision", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", decision: { id: unsafeId, goalId: "g", runId: "r", prompt: "Choose", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
+    const decisionId = (await t.store.get("g")).pendingDecisions[0]?.id ?? "";
+    assert.doesNotMatch(decisionId, /ghp_/);
+    assert.match(decisionId, /\[REDACTED\]/);
+    assert.ok(decisionId.length <= 133);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("late worker failure does not override terminal success", async () => {
   const t = await tempStore();
   try {
@@ -171,6 +186,21 @@ test("worker stdout events are serialized in emission order", async () => {
     assert.equal(updated.pendingDecisions.some((decision) => decision.id === "d"), true);
     assert.equal(updated.lastRunSummary, "done");
   } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker args from env are split with quote awareness", async () => {
+  const t = await tempStore();
+  const previous = process.env.PI_GOAL_WORKER_ARGS;
+  try {
+    process.env.PI_GOAL_WORKER_ARGS = "-e 'console.log(JSON.stringify({type:\"complete\",status:\"success\",summary:\"two words\"}));'";
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", { command: process.execPath });
+    assert.equal((await t.store.get("g")).lastRunSummary, "two words");
+  } finally {
+    if (previous === undefined) delete process.env.PI_GOAL_WORKER_ARGS;
+    else process.env.PI_GOAL_WORKER_ARGS = previous;
     await t.cleanup();
   }
 });
@@ -332,6 +362,34 @@ test("notification command timeout is recorded as nonfatal failure", async () =>
     assert.match(events, /"status":"failed"/);
     assert.equal((await t.store.get("g")).state, "active");
   } finally {
+    await t.cleanup();
+  }
+});
+
+test("notification args from env are split with quote awareness", async () => {
+  const t = await tempStore();
+  const previousCommand = process.env.PI_GOAL_NOTIFY_COMMAND;
+  const previousArgs = process.env.PI_GOAL_NOTIFY_ARGS;
+  const previousRelayCommand = process.env.PIRELAY_NOTIFY_COMMAND;
+  const previousRelayArgs = process.env.PIRELAY_NOTIFY_ARGS;
+  try {
+    const outputFile = path.join(t.store.paths.root, "notify-args.txt");
+    process.env.PI_GOAL_NOTIFY_COMMAND = process.execPath;
+    process.env.PI_GOAL_NOTIFY_ARGS = `-e 'require("fs").writeFileSync(process.argv[1], process.argv[2])' ${outputFile} "two words"`;
+    delete process.env.PIRELAY_NOTIFY_COMMAND;
+    delete process.env.PIRELAY_NOTIFY_ARGS;
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await notifyNonFatal(t.store, createDefaultNotificationSink(), goal, { type: "progress", goalId: "g", timestamp: new Date().toISOString(), message: "hi" });
+    assert.equal(await readFile(outputFile, "utf8"), "two words");
+  } finally {
+    if (previousCommand === undefined) delete process.env.PI_GOAL_NOTIFY_COMMAND;
+    else process.env.PI_GOAL_NOTIFY_COMMAND = previousCommand;
+    if (previousArgs === undefined) delete process.env.PI_GOAL_NOTIFY_ARGS;
+    else process.env.PI_GOAL_NOTIFY_ARGS = previousArgs;
+    if (previousRelayCommand === undefined) delete process.env.PIRELAY_NOTIFY_COMMAND;
+    else process.env.PIRELAY_NOTIFY_COMMAND = previousRelayCommand;
+    if (previousRelayArgs === undefined) delete process.env.PIRELAY_NOTIFY_ARGS;
+    else process.env.PIRELAY_NOTIFY_ARGS = previousRelayArgs;
     await t.cleanup();
   }
 });

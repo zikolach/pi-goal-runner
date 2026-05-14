@@ -5,6 +5,9 @@ import { createGhExecutor, type GhExecutor } from "./github/gh.js";
 import { createGithubPrGoal } from "./github/create.js";
 import { schedulerTick } from "./scheduler.js";
 import { redactText } from "./redaction.js";
+import { splitArgs } from "./args.js";
+
+export { splitArgs } from "./args.js";
 
 export const GOAL_SUBCOMMANDS = ["help", "list", "status", "pause", "resume", "cancel", "decisions", "answer", "watch-pr", "tick"];
 
@@ -76,14 +79,6 @@ Worktree: ${goal.github?.repository.worktreePath ?? "none"}`;
 export function formatDecisions(decisions: ReturnType<typeof listPendingDecisions>): string {
   if (!decisions.length) return "No pending decisions.";
   return decisions.map((decision) => `${decision.id}\tgoal=${decision.goalId}\t${redactText(decision.prompt, 160)}\tchoices=${decision.options.map((option) => option.id).join("|")}`).join("\n");
-}
-
-export function splitArgs(text: string): string[] {
-  const args: string[] = [];
-  const pattern = /"([^"]*)"|'([^']*)'|(\S+)/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(text))) args.push(match[1] ?? match[2] ?? match[3]);
-  return args;
 }
 
 function required(value: string | undefined, name: string): string {

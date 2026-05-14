@@ -4,6 +4,7 @@ import type { GoalEvent, GoalRecord } from "./types.js";
 import { appendGoalEvent } from "./state/events.js";
 import type { GoalStore } from "./state/store.js";
 import { redactText } from "./redaction.js";
+import { splitArgs } from "./args.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_NOTIFICATION_TIMEOUT_MS = 30_000;
@@ -35,10 +36,10 @@ export class CommandNotificationSink implements NotificationSink {
 
 export function createDefaultNotificationSink(): NotificationSink {
   if (process.env.PI_GOAL_NOTIFY_COMMAND) {
-    return new CommandNotificationSink(process.env.PI_GOAL_NOTIFY_COMMAND, process.env.PI_GOAL_NOTIFY_ARGS?.split(" ").filter(Boolean) ?? [], "command");
+    return new CommandNotificationSink(process.env.PI_GOAL_NOTIFY_COMMAND, process.env.PI_GOAL_NOTIFY_ARGS ? splitArgs(process.env.PI_GOAL_NOTIFY_ARGS).filter(Boolean) : [], "command");
   }
   if (process.env.PIRELAY_NOTIFY_COMMAND) {
-    return new CommandNotificationSink(process.env.PIRELAY_NOTIFY_COMMAND, process.env.PIRELAY_NOTIFY_ARGS?.split(" ").filter(Boolean) ?? [], "pirelay");
+    return new CommandNotificationSink(process.env.PIRELAY_NOTIFY_COMMAND, process.env.PIRELAY_NOTIFY_ARGS ? splitArgs(process.env.PIRELAY_NOTIFY_ARGS).filter(Boolean) : [], "pirelay");
   }
   return new NoopNotificationSink();
 }
