@@ -22,9 +22,17 @@ const config: GithubPrGoalConfig = {
 test("parses repositories and PRs", () => {
   assert.deepEqual(parseRepo("zikolach/pi-goal-runner").owner, "zikolach");
   assert.deepEqual(parseRepo("https://github.com/owner/my.repo.git"), { owner: "owner", repo: "my.repo", url: "https://github.com/owner/my.repo" });
+  assert.deepEqual(parseRepo("git@github.com:owner/my.repo.git"), { owner: "owner", repo: "my.repo", url: "https://github.com/owner/my.repo" });
   assert.equal(parsePr("ignored/repo", "https://github.com/owner/my.repo/pull/5").repository.repo, "my.repo");
   assert.equal(parsePr("ignored/repo", "https://github.com/zikolach/pi-goal-runner/pull/5").prNumber, 5);
   assert.equal(parsePr("zikolach/pi-goal-runner", " 123 ").prNumber, 123);
+  assert.throws(() => parseRepo("https://evilgithub.com/owner/repo"), /owner\/repo or a GitHub URL/);
+  assert.throws(() => parseRepo("https://github.com.evil.com/owner/repo"), /owner\/repo or a GitHub URL/);
+  assert.throws(() => parseRepo("https://api.github.com/owner/repo"), /owner\/repo or a GitHub URL/);
+  assert.throws(() => parsePr("zikolach/pi-goal-runner", "https://evilgithub.com/owner/repo/pull/5"), /integer PR number/);
+  assert.throws(() => parsePr("zikolach/pi-goal-runner", "https://github.com.evil.com/owner/repo/pull/5"), /integer PR number/);
+  assert.throws(() => parsePr("zikolach/pi-goal-runner", "https://api.github.com/owner/repo/pull/5"), /integer PR number/);
+  assert.throws(() => parsePr("zikolach/pi-goal-runner", "https://github.com/owner/repo/pull/5abc"), /integer PR number/);
   assert.throws(() => parsePr("zikolach/pi-goal-runner", "release-123"), /integer PR number/);
   assert.throws(() => parsePr("zikolach/pi-goal-runner", "v2"), /integer PR number/);
 });

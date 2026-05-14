@@ -19,12 +19,18 @@ export function createGhExecutor() {
 export async function ensureGhAuth(gh) {
     await gh.run(["auth", "status"]);
 }
+const GITHUB_REPOSITORY_REFERENCE_PATTERN = /^(?:(?:https?|ssh|git):\/\/(?:[^@\s/]+@)?github\.com(?::\d+)?\/|(?:[^@\s/]+@)?github\.com:|github\.com\/)([^/\s?#]+)\/([^/\s?#]+)([/?#].*)?$/;
+function matchGithubRepositoryReference(input) {
+    const match = input.match(GITHUB_REPOSITORY_REFERENCE_PATTERN);
+    if (!match)
+        return undefined;
+    return { owner: match[1], repo: stripGitSuffix(match[2]), suffix: match[3] ?? "" };
+}
 export function parseRepo(input) {
     const trimmed = input.trim();
-    const urlMatch = trimmed.match(/github\.com[:/]([^/]+)\/([^/?#]+?)(?:\.git)?(?:[/?#]|$)/);
-    if (urlMatch) {
-        const repo = stripGitSuffix(urlMatch[2]);
-        return { owner: urlMatch[1], repo, url: normalizedRepoUrl(urlMatch[1], repo) };
+    const repoReference = matchGithubRepositoryReference(trimmed);
+    if (repoReference) {
+        return { owner: repoReference.owner, repo: repoReference.repo, url: normalizedRepoUrl(repoReference.owner, repoReference.repo) };
     }
     const slash = trimmed.match(/^([^/\s]+)\/([^/\s]+)$/);
     if (slash)
@@ -33,11 +39,12 @@ export function parseRepo(input) {
 }
 export function parsePr(repoOrUrl, prInput) {
     const trimmedPrInput = prInput.trim();
-    const prUrlMatch = trimmedPrInput.match(/github\.com[:/]([^/]+)\/([^/?#]+)\/pull\/(\d+)/);
-    if (prUrlMatch) {
-        const owner = prUrlMatch[1];
-        const repo = stripGitSuffix(prUrlMatch[2]);
-        const prNumber = Number(prUrlMatch[3]);
+    const prUrlReference = matchGithubRepositoryReference(trimmedPrInput);
+    const prUrlNumberMatch = prUrlReference?.suffix.match(/^\/pull\/(\d+)(?:[/?#]|$)/);
+    if (prUrlReference && prUrlNumberMatch) {
+        const owner = prUrlReference.owner;
+        const repo = prUrlReference.repo;
+        const prNumber = Number(prUrlNumberMatch[1]);
         return { repository: { owner, repo, url: normalizedRepoUrl(owner, repo) }, prNumber, prUrl: `https://github.com/${owner}/${repo}/pull/${prNumber}` };
     }
     const repo = parseRepo(repoOrUrl);
