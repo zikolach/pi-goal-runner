@@ -14,6 +14,20 @@ async function tempStore() {
   return { store: createGoalStore(dir), cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs = 1_000): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timed out waiting for promise")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 test("due selection skips paused/cancelled/waiting goals", async () => {
   const t = await tempStore();
   try {
@@ -538,6 +552,60 @@ test("worker spawn errors record failure and resolve", async () => {
   }
 });
 
+test("worker spawn error fallback resolves even when state writes and reads fail", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    const realUpdate = t.store.update.bind(t.store);
+    const realGet = t.store.get.bind(t.store);
+    let updateCount = 0;
+    let getFails = false;
+    t.store.update = (async (goalId, updater, options) => {
+      updateCount++;
+      if (updateCount > 1) throw new Error("read-only state");
+      const updated = await realUpdate(goalId, updater, options);
+      getFails = true;
+      return updated;
+    }) as typeof t.store.update;
+    t.store.get = (async (goalId) => {
+      if (getFails) throw new Error("cannot read state");
+      return realGet(goalId);
+    }) as typeof t.store.get;
+    const updated = await withTimeout(launchWorker(t.store, goal, "", { command: path.join(t.store.paths.root, "missing-worker-binary"), args: [] }));
+    assert.equal(updated.state, "failed");
+    assert.match(updated.latestProgress ?? "", /cannot read state/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker close fallback resolves even when state writes and reads fail", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    const realUpdate = t.store.update.bind(t.store);
+    const realGet = t.store.get.bind(t.store);
+    let updateCount = 0;
+    let getFails = false;
+    t.store.update = (async (goalId, updater, options) => {
+      updateCount++;
+      if (updateCount > 1) throw new Error("read-only state");
+      const updated = await realUpdate(goalId, updater, options);
+      getFails = true;
+      return updated;
+    }) as typeof t.store.update;
+    t.store.get = (async (goalId) => {
+      if (getFails) throw new Error("cannot read state");
+      return realGet(goalId);
+    }) as typeof t.store.get;
+    const updated = await withTimeout(launchWorker(t.store, goal, "", { command: process.execPath, args: ["-e", "process.exit(1);"] }));
+    assert.equal(updated.state, "failed");
+    assert.match(updated.latestProgress ?? "", /cannot read state/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("stale completion does not advance handled timestamps", async () => {
   const t = await tempStore();
   try {
@@ -706,6 +774,32 @@ test("notification command receives payload by temp file instead of environment"
       { type: "progress", goalId: "g", timestamp: new Date().toISOString(), message: "hi" },
     );
     assert.equal(await readFile(outputFile, "utf8"), "g:hi:true");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("notification command payload file uses restrictive permissions", async () => {
+  if (process.platform === "win32") return;
+  const t = await tempStore();
+  try {
+    const outputFile = path.join(t.store.paths.root, "notification-mode.txt");
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await notifyNonFatal(
+      t.store,
+      new CommandNotificationSink(
+        process.execPath,
+        [
+          "-e",
+          "require('fs').writeFileSync(process.argv[1], String(require('fs').statSync(process.env.PI_GOAL_NOTIFICATION_FILE).mode & 0o777));",
+          outputFile,
+        ],
+        "file",
+      ),
+      goal,
+      { type: "progress", goalId: "g", timestamp: new Date().toISOString(), message: "hi" },
+    );
+    assert.equal(await readFile(outputFile, "utf8"), String(0o600));
   } finally {
     await t.cleanup();
   }

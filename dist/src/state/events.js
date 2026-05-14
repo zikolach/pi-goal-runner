@@ -1,8 +1,11 @@
-import { appendFile } from "node:fs/promises";
+import { appendFile, chmod } from "node:fs/promises";
 import { redactObject, redactText } from "../redaction.js";
 import { ensureDir } from "./json.js";
 const MAX_ADDRESSED_THREAD_IDS = 50;
 const MAX_ADDRESSED_THREAD_ID_LENGTH = 120;
+const MAX_VALIDATION_RESULTS = 20;
+const MAX_VALIDATION_COMMAND_LENGTH = 500;
+const MAX_VALIDATION_OUTPUT_LENGTH = 2_000;
 function nowIso() {
     return new Date().toISOString();
 }
@@ -47,7 +50,7 @@ export function normalizeWorkerEvent(goalId, runId, raw) {
             status: event.status === "quiet" || event.status === "stale" ? event.status : "success",
             summary: redactText(event.summary ?? "Worker completed", 2_000),
             commitSha: typeof event.commitSha === "string" ? redactText(event.commitSha, 80) : undefined,
-            validationResults: Array.isArray(event.validationResults) ? redactObject(event.validationResults, 1_000) : undefined,
+            validationResults: normalizeValidationResults(event.validationResults),
             addressedThreadIds: normalizeAddressedThreadIds(event.addressedThreadIds),
         };
     }
@@ -91,6 +94,25 @@ function normalizeAddressedThreadIds(value) {
     }
     return ids.length ? ids : undefined;
 }
+function normalizeValidationResults(value) {
+    if (!Array.isArray(value))
+        return undefined;
+    const results = [];
+    for (const rawResult of value.slice(0, MAX_VALIDATION_RESULTS)) {
+        if (!rawResult || typeof rawResult !== "object")
+            continue;
+        const item = rawResult;
+        const command = redactText(item.command ?? "", MAX_VALIDATION_COMMAND_LENGTH).trim();
+        if (!command)
+            continue;
+        const status = item.status === "passed" || item.status === "failed" || item.status === "skipped" ? item.status : "skipped";
+        const result = { command, status };
+        if (item.output !== undefined)
+            result.output = redactText(item.output, MAX_VALIDATION_OUTPUT_LENGTH);
+        results.push(result);
+    }
+    return results.length ? results : undefined;
+}
 export function parseWorkerEventLine(goalId, runId, line) {
     try {
         return normalizeWorkerEvent(goalId, runId, JSON.parse(line));
@@ -102,6 +124,14 @@ export function parseWorkerEventLine(goalId, runId, line) {
 export async function appendGoalEvent(paths, event) {
     await ensureDir(paths.goalDir(event.goalId));
     const safe = redactObject(event, 4_000);
-    await appendFile(paths.eventsFile(event.goalId), `${JSON.stringify(safe)}\n`, { encoding: "utf8", mode: 0o600 });
+    const file = paths.eventsFile(event.goalId);
+    await appendFile(file, `${JSON.stringify(safe)}\n`, { encoding: "utf8", mode: 0o600 });
+    try {
+        await chmod(file, 0o600);
+    }
+    catch (error) {
+        if (process.platform !== "win32" || !(error instanceof Error && "code" in error && error.code === "EPERM"))
+            throw error;
+    }
 }
 //# sourceMappingURL=events.js.map

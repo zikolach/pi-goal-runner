@@ -31,7 +31,7 @@ export class CommandNotificationSink implements NotificationSink {
     const tempDir = await mkdtemp(path.join(tmpdir(), "pi-goal-notification-"));
     const payloadFile = path.join(tempDir, "payload.json");
     try {
-      await writeFile(payloadFile, JSON.stringify({ goalId: goal.id, event }), "utf8");
+      await writeFile(payloadFile, JSON.stringify({ goalId: goal.id, event }), { encoding: "utf8", mode: 0o600 });
       const env: NodeJS.ProcessEnv = { ...process.env, PI_GOAL_NOTIFICATION_FILE: payloadFile };
       delete env.PI_GOAL_NOTIFICATION;
       await execFileAsync(this.command, this.args, {

@@ -50,6 +50,25 @@ export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: st
     let settled = false;
     let ingestionQueue: Promise<void> = Promise.resolve();
     const ingestionFailures: string[] = [];
+    const resolveBestEffortFailure = async (error: unknown) => {
+      const message = redactText(error instanceof Error ? error.message : String(error), 1_000);
+      try {
+        await store.update(goal.id, (current) => ({ ...current, state: "failed", latestProgress: message }));
+      } catch {
+        // Fall through to a best-effort read or in-memory fallback below.
+      }
+      try {
+        resolve(await store.get(goal.id));
+        return;
+      } catch {
+        const completedAt = new Date().toISOString();
+        const failedRun: RunSummary = { ...run, completedAt, status: "failed", summary: message };
+        const runHistory = goal.runHistory.some((candidate) => candidate.id === runId)
+          ? goal.runHistory.map((candidate) => candidate.id === runId ? failedRun : candidate)
+          : [...goal.runHistory, failedRun];
+        resolve({ ...goal, state: "failed", updatedAt: completedAt, latestProgress: message, runHistory });
+      }
+    };
     const enqueueEvent = (event: GoalEvent, forcedStatus?: RunSummary["status"]) => {
       const emittedTerminalType = event.type === "complete" || event.type === "failure" || event.type === "decision" ? event.type : undefined;
       ingestionQueue = ingestionQueue.catch(() => undefined).then(async () => {
@@ -144,9 +163,8 @@ export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: st
         const event: FailureEvent = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker failed to start: ${redactText(error.message, 2_000)}`, retryable: true };
         await enqueueEvent(event, "failed");
         resolve(await store.get(goal.id));
-      })().catch(async (updateError) => {
-        await store.update(goal.id, (current) => ({ ...current, state: "failed", latestProgress: redactText(updateError instanceof Error ? updateError.message : String(updateError), 1_000) }));
-        resolve(await store.get(goal.id));
+      })().catch((updateError) => {
+        void resolveBestEffortFailure(updateError);
       });
     });
     child.on("close", (code, signal) => {
@@ -172,9 +190,8 @@ export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: st
           await enqueueEvent(event, "failed");
         }
         resolve(await store.get(goal.id));
-      })().catch(async (error) => {
-        await store.update(goal.id, (current) => ({ ...current, state: "failed", latestProgress: redactText(error instanceof Error ? error.message : String(error), 1_000) }));
-        resolve(await store.get(goal.id));
+      })().catch((error) => {
+        void resolveBestEffortFailure(error);
       });
     });
   });

@@ -104,6 +104,38 @@ test("append event log redacts secrets and parses malformed events safely", asyn
   }
 });
 
+test("append event log tightens existing file permissions", async () => {
+  if (process.platform === "win32") return;
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe", schedule: defaultSchedule() });
+    await writeFile(t.store.paths.eventsFile("goal-1"), "", "utf8");
+    await chmod(t.store.paths.eventsFile("goal-1"), 0o644);
+    await appendGoalEvent(t.store.paths, { type: "progress", goalId: "goal-1", timestamp: new Date().toISOString(), message: "hi" });
+    assert.equal((await stat(t.store.paths.eventsFile("goal-1"))).mode & 0o777, 0o600);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker validation results are bounded and field-limited", () => {
+  const results = Array.from({ length: 25 }, (_, index) => ({
+    command: `npm test ${index} ghp_1234567890123456789012345 ${"x".repeat(600)}`,
+    status: index === 0 ? "failed" : "passed",
+    output: `token sk-abcdefghijklmnopqrstuvwxyz ${"y".repeat(3_000)}`,
+  }));
+  const event = parseWorkerEventLine("goal-1", "run-1", JSON.stringify({ type: "complete", validationResults: results }));
+  assert.equal(event.type, "complete");
+  if (event.type === "complete") {
+    assert.equal(event.validationResults?.length, 20);
+    assert.equal(event.validationResults?.[0]?.status, "failed");
+    assert.ok((event.validationResults?.[0]?.command.length ?? 0) <= 513);
+    assert.ok((event.validationResults?.[0]?.output?.length ?? 0) <= 2_013);
+    assert.doesNotMatch(event.validationResults?.[0]?.command ?? "", /ghp_/);
+    assert.doesNotMatch(event.validationResults?.[0]?.output ?? "", /sk-/);
+  }
+});
+
 test("malformed decision options are normalized safely", () => {
   const event = parseWorkerEventLine("goal-1", "run-1", JSON.stringify({ type: "decision", decision: { id: "d", prompt: "Pick", options: [null, "bad", { id: "ok", label: "Okay" }] } }));
   assert.equal(event.type, "decision");

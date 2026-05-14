@@ -1,11 +1,14 @@
-import { appendFile } from "node:fs/promises";
-import type { DecisionRecord, GoalEvent } from "../types.js";
+import { appendFile, chmod } from "node:fs/promises";
+import type { DecisionRecord, GoalEvent, ValidationResult } from "../types.js";
 import { redactObject, redactText } from "../redaction.js";
 import { ensureDir } from "./json.js";
 import type { StatePaths } from "./paths.js";
 
 const MAX_ADDRESSED_THREAD_IDS = 50;
 const MAX_ADDRESSED_THREAD_ID_LENGTH = 120;
+const MAX_VALIDATION_RESULTS = 20;
+const MAX_VALIDATION_COMMAND_LENGTH = 500;
+const MAX_VALIDATION_OUTPUT_LENGTH = 2_000;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -52,7 +55,7 @@ export function normalizeWorkerEvent(goalId: string, runId: string | undefined, 
       status: event.status === "quiet" || event.status === "stale" ? event.status : "success",
       summary: redactText(event.summary ?? "Worker completed", 2_000),
       commitSha: typeof event.commitSha === "string" ? redactText(event.commitSha, 80) : undefined,
-      validationResults: Array.isArray(event.validationResults) ? redactObject(event.validationResults, 1_000) : undefined,
+      validationResults: normalizeValidationResults(event.validationResults),
       addressedThreadIds: normalizeAddressedThreadIds(event.addressedThreadIds),
     };
   }
@@ -96,6 +99,22 @@ function normalizeAddressedThreadIds(value: unknown): string[] | undefined {
   return ids.length ? ids : undefined;
 }
 
+function normalizeValidationResults(value: unknown): ValidationResult[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const results: ValidationResult[] = [];
+  for (const rawResult of value.slice(0, MAX_VALIDATION_RESULTS)) {
+    if (!rawResult || typeof rawResult !== "object") continue;
+    const item = rawResult as Record<string, unknown>;
+    const command = redactText(item.command ?? "", MAX_VALIDATION_COMMAND_LENGTH).trim();
+    if (!command) continue;
+    const status = item.status === "passed" || item.status === "failed" || item.status === "skipped" ? item.status : "skipped";
+    const result: ValidationResult = { command, status };
+    if (item.output !== undefined) result.output = redactText(item.output, MAX_VALIDATION_OUTPUT_LENGTH);
+    results.push(result);
+  }
+  return results.length ? results : undefined;
+}
+
 export function parseWorkerEventLine(goalId: string, runId: string | undefined, line: string): GoalEvent {
   try {
     return normalizeWorkerEvent(goalId, runId, JSON.parse(line));
@@ -107,5 +126,11 @@ export function parseWorkerEventLine(goalId: string, runId: string | undefined, 
 export async function appendGoalEvent(paths: StatePaths, event: GoalEvent): Promise<void> {
   await ensureDir(paths.goalDir(event.goalId));
   const safe = redactObject(event, 4_000);
-  await appendFile(paths.eventsFile(event.goalId), `${JSON.stringify(safe)}\n`, { encoding: "utf8", mode: 0o600 });
+  const file = paths.eventsFile(event.goalId);
+  await appendFile(file, `${JSON.stringify(safe)}\n`, { encoding: "utf8", mode: 0o600 });
+  try {
+    await chmod(file, 0o600);
+  } catch (error) {
+    if (process.platform !== "win32" || !(error instanceof Error && "code" in error && error.code === "EPERM")) throw error;
+  }
 }
