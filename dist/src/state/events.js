@@ -14,8 +14,10 @@ export function normalizeWorkerEvent(goalId, runId, raw) {
         return { type, goalId, runId, timestamp: nowIso(), message: redactText(event.message ?? "", 1_000) };
     }
     if (type === "decision") {
-        const decisionRaw = event.decision;
+        const decisionRaw = event.decision && typeof event.decision === "object" ? event.decision : undefined;
         const options = Array.isArray(decisionRaw?.options) ? decisionRaw.options : [];
+        const timeoutAt = typeof decisionRaw?.timeoutAt === "string" ? decisionRaw.timeoutAt : undefined;
+        const required = typeof decisionRaw?.required === "boolean" ? decisionRaw.required : true;
         return {
             type,
             goalId,
@@ -28,9 +30,9 @@ export function normalizeWorkerEvent(goalId, runId, raw) {
                 prompt: redactText(decisionRaw?.prompt ?? event.prompt ?? "Decision required", 2_000),
                 options: normalizeDecisionOptions(options),
                 createdAt: nowIso(),
-                timeoutAt: decisionRaw?.timeoutAt,
+                timeoutAt,
                 status: "pending",
-                required: decisionRaw?.required ?? true,
+                required,
             },
         };
     }
