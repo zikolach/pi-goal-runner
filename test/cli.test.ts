@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { MAX_DAEMON_INTERVAL_MS, parseDaemonInterval, runDaemonTick } from "../src/cli.js";
+import { goalArgsFromCli, MAX_DAEMON_INTERVAL_MS, parseDaemonInterval, runDaemonTick } from "../src/cli.js";
 
 test("daemon interval rejects timer-clamped tight-loop values", () => {
   assert.equal(parseDaemonInterval(undefined), 60_000);
@@ -19,6 +19,12 @@ test("daemon interval rejects timer-clamped tight-loop values", () => {
       return true;
     },
   );
+});
+
+test("cli goal command preserves argv token boundaries", () => {
+  const argv = ["watch-pr", "owner/repo", "1", "--validation", "npm test"];
+  assert.deepEqual(goalArgsFromCli("goal", argv), argv);
+  assert.deepEqual(goalArgsFromCli("watch-pr", ["owner/repo", "1", "--validation", "npm test"]), ["watch-pr", "owner/repo", "1", "--validation", "npm test"]);
 });
 
 test("generated cli declarations do not include a shebang", async () => {

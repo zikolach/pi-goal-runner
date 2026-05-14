@@ -10,9 +10,9 @@ export async function replyAndResolveAddressedThreads(gh: GhExecutor, config: Gi
   for (const threadId of threadIds) {
     const body = `Addressed in ${event.commitSha}. Validation: ${formatValidation(event)}.`;
     await gh.run(["api", "graphql", "-f", `query=mutation($thread:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$thread,body:$body}){comment{id}}}`,
-      "-F", `thread=${threadId}`, "-F", `body=${body}`]);
+      "-f", `thread=${threadId}`, "-f", `body=${body}`]);
     await gh.run(["api", "graphql", "-f", `query=mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{id isResolved}}}`,
-      "-F", `thread=${threadId}`]);
+      "-f", `thread=${threadId}`]);
     resolved.push(threadId);
   }
   if (resolved.length) await gh.run(["pr", "view", String(config.prNumber), "--repo", repo, "--json", "number"]);

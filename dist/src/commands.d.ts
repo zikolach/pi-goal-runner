@@ -9,6 +9,11 @@ export declare function handleGoalCommand(store: GoalStore, argsText: string, op
     cwd?: string;
     dryRunWorker?: boolean;
 }): Promise<string>;
+export declare function handleGoalCommandArgs(store: GoalStore, args: string[], options?: {
+    gh?: GhExecutor;
+    cwd?: string;
+    dryRunWorker?: boolean;
+}): Promise<string>;
 export declare function goalHelp(): string;
 export declare function formatGoalList(goals: GoalRecord[]): string;
 export declare function formatGoalStatus(goal: GoalRecord): string;

@@ -13,7 +13,10 @@ export { splitArgs } from "./args.js";
 export const GOAL_SUBCOMMANDS = ["help", "list", "status", "pause", "resume", "cancel", "decisions", "answer", "watch-pr", "tick"];
 
 export async function handleGoalCommand(store: GoalStore, argsText: string, options: { gh?: GhExecutor; cwd?: string; dryRunWorker?: boolean } = {}): Promise<string> {
-  const args = splitArgs(argsText);
+  return handleGoalCommandArgs(store, splitArgs(argsText), options);
+}
+
+export async function handleGoalCommandArgs(store: GoalStore, args: string[], options: { gh?: GhExecutor; cwd?: string; dryRunWorker?: boolean } = {}): Promise<string> {
   const cmd = args[0] ?? "help";
   if (cmd === "help") return goalHelp();
   if (cmd === "list") return formatGoalList(await store.list());

@@ -8,7 +8,9 @@ import { withGoalLock } from "./state/lock.js";
 export { splitArgs } from "./args.js";
 export const GOAL_SUBCOMMANDS = ["help", "list", "status", "pause", "resume", "cancel", "decisions", "answer", "watch-pr", "tick"];
 export async function handleGoalCommand(store, argsText, options = {}) {
-    const args = splitArgs(argsText);
+    return handleGoalCommandArgs(store, splitArgs(argsText), options);
+}
+export async function handleGoalCommandArgs(store, args, options = {}) {
     const cmd = args[0] ?? "help";
     if (cmd === "help")
         return goalHelp();

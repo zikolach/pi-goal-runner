@@ -3,7 +3,7 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { handleGoalCommand, splitArgs } from "../src/commands.js";
+import { handleGoalCommand, handleGoalCommandArgs, splitArgs } from "../src/commands.js";
 import { createGoalStore } from "../src/state/store.js";
 import { acquireGoalLock } from "../src/state/lock.js";
 import { defaultSchedule } from "../src/policy.js";
@@ -124,6 +124,19 @@ test("watch-pr preserves zero quiet window option", async () => {
     const goalId = output.match(/Created (\S+):/)?.[1];
     assert.ok(goalId);
     assert.equal((await t.store.get(goalId)).schedule.quietWindow.durationMs, 0);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("watch-pr args entrypoint preserves shell-quoted argv token boundaries", async () => {
+  const t = await tempStore();
+  try {
+    const gh = { run: async (args: string[]) => (args[0] === "auth" ? "" : JSON.stringify({ url: "https://github.com/owner/repo/pull/1", headRefName: "branch", baseRefName: "main" })) };
+    const output = await handleGoalCommandArgs(t.store, ["watch-pr", "owner/repo", "1", "--validation", "npm test"], { gh });
+    const goalId = output.match(/Created (\S+):/)?.[1];
+    assert.ok(goalId);
+    assert.deepEqual((await t.store.get(goalId)).github?.validationCommands, ["npm test"]);
   } finally {
     await t.cleanup();
   }

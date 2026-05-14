@@ -148,6 +148,24 @@ test("auto reply requires valid commit sha evidence", async () => {
   assert.deepEqual(calls, []);
 });
 
+test("auto reply passes thread and body GraphQL variables as raw strings", async () => {
+  const calls: string[][] = [];
+  const gh: GhExecutor = { run: async (args) => { calls.push(args); return "{}"; } };
+  const resolved = await replyAndResolveAddressedThreads(
+    gh,
+    { ...config, autoReplyAndResolve: true },
+    { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done", commitSha: "abcdef1", addressedThreadIds: ["@not-a-file"] },
+  );
+  assert.deepEqual(resolved, ["@not-a-file"]);
+  const graphqlCalls = calls.filter((args) => args[0] === "api" && args[1] === "graphql");
+  assert.equal(graphqlCalls.length, 2);
+  for (const args of graphqlCalls) {
+    const threadFlagIndex = args.indexOf("thread=@not-a-file") - 1;
+    assert.equal(args[threadFlagIndex], "-f");
+    assert.equal(args.includes("-F"), false);
+  }
+});
+
 test("detects new review and failing checks, ignores stale handled comments", () => {
   const observation = {
     observedAt: "2026-01-01T00:00:00Z",

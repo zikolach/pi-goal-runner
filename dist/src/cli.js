@@ -1,6 +1,6 @@
 import { pathToFileURL } from "node:url";
 import { createGoalStore } from "./state/store.js";
-import { handleGoalCommand } from "./commands.js";
+import { handleGoalCommandArgs } from "./commands.js";
 import { schedulerTick } from "./scheduler.js";
 import { safeError } from "./redaction.js";
 export async function main() {
@@ -20,10 +20,12 @@ export async function main() {
         console.log(JSON.stringify(result, null, 2));
         return;
     }
-    const text = command === "goal" ? args.join(" ") : [command, ...args].join(" ");
-    console.log(await handleGoalCommand(store, text, { cwd: process.cwd() }));
+    console.log(await handleGoalCommandArgs(store, goalArgsFromCli(command, args), { cwd: process.cwd() }));
 }
 export const MAX_DAEMON_INTERVAL_MS = 2_147_483_647;
+export function goalArgsFromCli(command, args) {
+    return command === "goal" ? args : [command, ...args];
+}
 export function parseDaemonInterval(value) {
     const intervalMs = Number(value ?? "60000");
     if (!Number.isFinite(intervalMs) || intervalMs < 1_000 || intervalMs > MAX_DAEMON_INTERVAL_MS) {
