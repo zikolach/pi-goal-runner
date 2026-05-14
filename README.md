@@ -28,6 +28,84 @@ The package registers a `/goal` Pi command and a `pi-goal-runner` CLI after buil
 
 `/goal watch-pr` validates GitHub authentication and PR metadata through `gh`. The scheduler observes review threads and checks before launching a worker.
 
+## Architecture
+
+`pi-goal-runner` is intended to run durable fuzzy goals: a user describes a desired ongoing outcome, the scheduler periodically reconsiders that goal, and an AI worker decides whether it can make useful progress. GitHub PR review follow-up is the first built-in goal type, not the whole architecture.
+
+```text
+/goal command, Pi timer, or CLI daemon
+              │
+              ▼
+┌────────────────────────────┐
+│ Durable goal store         │
+│ state.json + events.jsonl  │
+└─────────────┬──────────────┘
+              │ due goals
+              ▼
+┌────────────────────────────┐
+│ Scheduler                  │
+│ when to reconsider a goal  │
+└─────────────┬──────────────┘
+              │ context + prompt
+              ▼
+┌────────────────────────────┐
+│ Goal adapter               │
+│ GitHub PR review today;    │
+│ more goal types later      │
+└─────────────┬──────────────┘
+              │ task prompt
+              ▼
+┌────────────────────────────┐
+│ AI worker subprocess       │
+│ attempts progress or asks  │
+│ for a decision             │
+└─────────────┬──────────────┘
+              │ JSONL events
+              ▼
+┌────────────────────────────┐
+│ Durable goal store         │
+└────────────────────────────┘
+```
+
+The core loop is deliberately small:
+
+```text
+scheduler tick
+  ├─ skip goals that are paused, terminal, locked, waiting, or not due
+  ├─ collect current context for each due goal
+  ├─ decide whether useful work is possible now
+  ├─ launch a worker when action is warranted
+  ├─ record progress, decisions, completions, or failures as events
+  └─ reschedule with backoff, wait for a decision, or mark the goal quiet/complete
+```
+
+### Current implementation map
+
+| Layer | Modules | Notes |
+| --- | --- | --- |
+| Entrypoints | `src/extension.ts`, `src/cli.ts` | Pi `/goal` command, session timer, and `pi-goal-runner tick/daemon`. |
+| Durable state | `src/state/*` | One directory per goal under `~/.pi/agent/goals` by default, with atomic state writes, event logs, path validation, and locks. |
+| Scheduling policy | `src/scheduler.ts`, `src/policy.ts` | Due-goal selection, backoff, quiet windows, lock handling, and failure recovery. |
+| Worker protocol | `src/worker/*` | Prompt construction, optional worktree setup, subprocess launch, bounded stdout ingestion, and JSONL event handling. |
+| Decisions | `src/decisions.ts` | Durable pending questions that can be answered later with `/goal answer`. |
+| Notifications | `src/notifications.ts` | Best-effort notifications that never determine core goal health. |
+| GitHub PR adapter | `src/github/*` | First concrete adapter: observe review threads/checks, build PR-review context, and optionally reply/resolve addressed threads. |
+
+### Worker event protocol
+
+Workers report state changes through newline-delimited JSON events on stdout:
+
+- `progress`: human-readable status update
+- `decision`: durable question for the user before continuing
+- `complete`: successful, quiet, or stale completion summary
+- `failure`: retryable or terminal failure information
+
+Events are appended to `events.jsonl` before being folded into `state.json`, so the event log remains useful for debugging even after daemon restarts or worker failures.
+
+### About the GitHub PR focus
+
+The repository currently contains PR-specific fields and modules because GitHub PR review follow-up was the first concrete use case. The intended direction is to keep extracting generic goal-runner behavior into the core and leave PR review logic in a replaceable adapter layer.
+
 ## Security model
 
 - Goal state is stored outside the LLM transcript under `~/.pi/agent/goals` by default.
