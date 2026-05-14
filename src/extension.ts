@@ -35,6 +35,13 @@ export function runSerializedSchedulerTick(state: SerializedTickState, tick: () 
   return true;
 }
 
+export function splitCompletionPrefix(prefix: string): string[] {
+  const trimmed = prefix.trimStart();
+  const parts = trimmed.split(/\s+/);
+  if (trimmed.length > 0 && /\s$/.test(prefix) && parts.at(-1) !== "") return [...parts, ""];
+  return parts;
+}
+
 export default function goalRunnerExtension(pi: ExtensionAPI): void {
   const store = createGoalStore();
   let timer: NodeJS.Timeout | undefined;
@@ -43,7 +50,7 @@ export default function goalRunnerExtension(pi: ExtensionAPI): void {
   pi.registerCommand("goal", {
     description: "Manage durable automation goals",
     getArgumentCompletions: async (prefix: string) => {
-      const parts = prefix.trimStart().split(/\s+/);
+      const parts = splitCompletionPrefix(prefix);
       if (parts.length <= 1) return GOAL_SUBCOMMANDS.filter((item) => item.startsWith(parts[0] ?? "")).map((value) => ({ value, label: value }));
       const sub = parts[0];
       if (["status", "pause", "resume", "cancel"].includes(sub)) {

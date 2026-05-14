@@ -14,6 +14,13 @@ export function runSerializedSchedulerTick(state, tick, onError) {
     });
     return true;
 }
+export function splitCompletionPrefix(prefix) {
+    const trimmed = prefix.trimStart();
+    const parts = trimmed.split(/\s+/);
+    if (trimmed.length > 0 && /\s$/.test(prefix) && parts.at(-1) !== "")
+        return [...parts, ""];
+    return parts;
+}
 export default function goalRunnerExtension(pi) {
     const store = createGoalStore();
     let timer;
@@ -21,7 +28,7 @@ export default function goalRunnerExtension(pi) {
     pi.registerCommand("goal", {
         description: "Manage durable automation goals",
         getArgumentCompletions: async (prefix) => {
-            const parts = prefix.trimStart().split(/\s+/);
+            const parts = splitCompletionPrefix(prefix);
             if (parts.length <= 1)
                 return GOAL_SUBCOMMANDS.filter((item) => item.startsWith(parts[0] ?? "")).map((value) => ({ value, label: value }));
             const sub = parts[0];

@@ -20,5 +20,6 @@ export interface SerializedTickState {
     inFlight: boolean;
 }
 export declare function runSerializedSchedulerTick(state: SerializedTickState, tick: () => Promise<void>, onError: (error: unknown) => void): boolean;
+export declare function splitCompletionPrefix(prefix: string): string[];
 export default function goalRunnerExtension(pi: ExtensionAPI): void;
 export {};

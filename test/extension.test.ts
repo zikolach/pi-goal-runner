@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runSerializedSchedulerTick } from "../src/extension.js";
+import { runSerializedSchedulerTick, splitCompletionPrefix } from "../src/extension.js";
+
+test("extension completion tokenizer preserves trailing empty argument", () => {
+  assert.deepEqual(splitCompletionPrefix("status "), ["status", ""]);
+  assert.deepEqual(splitCompletionPrefix("  status   "), ["status", ""]);
+  assert.deepEqual(splitCompletionPrefix("  "), [""]);
+  assert.deepEqual(splitCompletionPrefix("status goal-123"), ["status", "goal-123"]);
+});
 
 test("extension scheduler ticks are serialized", async () => {
   const state = { inFlight: false };
