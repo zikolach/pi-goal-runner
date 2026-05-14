@@ -45,6 +45,20 @@ test("rejects fork PRs when creating a goal", async () => {
   }
 });
 
+test("validates schedule overrides when creating a goal", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
+  try {
+    const store = createGoalStore(dir);
+    const gh: GhExecutor = { run: async () => { throw new Error("gh should not be called for invalid schedule options"); } };
+    await assert.rejects(() => createGithubPrGoal(store, gh, "owner/repo", "1", { quietWindowMs: Number.NaN }), /quietWindowMs must be a finite non-negative number/);
+    await assert.rejects(() => createGithubPrGoal(store, gh, "owner/repo", "1", { initialBackoffMs: -1 }), /initialBackoffMs must be a finite non-negative number/);
+    await assert.rejects(() => createGithubPrGoal(store, gh, "owner/repo", "1", { maxBackoffMs: 30_000 }), /maxBackoffMs must be greater than or equal to initialBackoffMs/);
+    await assert.rejects(() => createGithubPrGoal(store, gh, "owner/repo", "1", { initialBackoffMs: 120_000, maxBackoffMs: 60_000 }), /maxBackoffMs must be greater than or equal to initialBackoffMs/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("observes mocked gh output and detects no-op", async () => {
   const calls: string[][] = [];
   const gh: GhExecutor = {
@@ -90,4 +104,11 @@ test("detects new review and failing checks, ignores stale handled comments", ()
   };
   assert.equal(findActionable(config, observation).actionable, true);
   assert.equal(findActionable({ ...config, lastHandledAt: "2026-01-02T00:00:00Z", handledThreadIds: ["t1"], handledCheckNames: ["ci"] }, observation).actionable, false);
+  assert.equal(
+    findActionable(
+      { ...config, lastHandledAt: "2026-01-02T00:00:00Z", handledThreadIds: ["t1"] },
+      { ...observation, reviewThreads: [{ ...observation.reviewThreads[0], updatedAt: "2026-01-03T00:00:00Z", comments: [{ id: "c2", body: "new fix", updatedAt: "2026-01-03T00:00:00Z" }] }] },
+    ).actionable,
+    true,
+  );
 });

@@ -42,9 +42,9 @@ export function findActionable(config, observation) {
     const threads = observation.reviewThreads.filter((thread) => {
         if (thread.resolved || thread.outdated)
             return false;
-        if (config.handledThreadIds.includes(thread.id))
-            return false;
         const updated = latestThreadTime(thread);
+        if (config.handledThreadIds.includes(thread.id) && updated && updated.getTime() <= lastHandled)
+            return false;
         return !updated || updated.getTime() > lastHandled;
     });
     const checks = observation.checks.filter((check) => {
@@ -107,6 +107,9 @@ function latestThreadTime(thread) {
     const times = [thread.updatedAt, ...thread.comments.map((comment) => comment.updatedAt)].filter(Boolean);
     if (!times.length)
         return undefined;
-    return new Date(Math.max(...times.map((time) => new Date(time).getTime())));
+    const timestamps = times.map((time) => new Date(time).getTime()).filter(Number.isFinite);
+    if (!timestamps.length)
+        return undefined;
+    return new Date(Math.max(...timestamps));
 }
 //# sourceMappingURL=observe.js.map

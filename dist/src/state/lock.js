@@ -42,7 +42,10 @@ async function isStale(lockPath, staleMs) {
         const parsed = JSON.parse(text);
         if (!parsed.createdAt)
             return isLockDirStale(lockPath, staleMs);
-        return Date.now() - new Date(parsed.createdAt).getTime() > staleMs;
+        const createdAtMs = new Date(parsed.createdAt).getTime();
+        if (!Number.isFinite(createdAtMs))
+            return isLockDirStale(lockPath, staleMs);
+        return Date.now() - createdAtMs > staleMs;
     }
     catch {
         return isLockDirStale(lockPath, staleMs);

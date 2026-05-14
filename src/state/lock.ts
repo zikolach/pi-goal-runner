@@ -47,7 +47,9 @@ async function isStale(lockPath: string, staleMs: number): Promise<boolean> {
     const text = await readFile(path.join(lockPath, "owner.json"), "utf8");
     const parsed = JSON.parse(text) as { createdAt?: string };
     if (!parsed.createdAt) return isLockDirStale(lockPath, staleMs);
-    return Date.now() - new Date(parsed.createdAt).getTime() > staleMs;
+    const createdAtMs = new Date(parsed.createdAt).getTime();
+    if (!Number.isFinite(createdAtMs)) return isLockDirStale(lockPath, staleMs);
+    return Date.now() - createdAtMs > staleMs;
   } catch {
     return isLockDirStale(lockPath, staleMs);
   }

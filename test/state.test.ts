@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -117,6 +117,20 @@ test("stale locks recover when owner metadata is missing", async () => {
   const t = await tempStore();
   try {
     await mkdir(t.store.paths.lockDir("goal-1"), { recursive: true });
+    const recovered = await acquireGoalLock(t.store.paths, "goal-1", 0);
+    assert.ok(recovered);
+    await recovered.release();
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("stale locks recover when owner metadata has an invalid createdAt", async () => {
+  const t = await tempStore();
+  try {
+    const lockDir = t.store.paths.lockDir("goal-1");
+    await mkdir(lockDir, { recursive: true });
+    await writeFile(path.join(lockDir, "owner.json"), JSON.stringify({ pid: 123, createdAt: "not-a-date" }), "utf8");
     const recovered = await acquireGoalLock(t.store.paths, "goal-1", 0);
     assert.ok(recovered);
     await recovered.release();
