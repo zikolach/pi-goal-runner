@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { createGithubPrGoal } from "../src/github/create.js";
 import { parsePr, parseRepo, type GhExecutor } from "../src/github/gh.js";
+import { createGoalStore } from "../src/state/store.js";
 import { findActionable, observeGithubPr } from "../src/github/observe.js";
 import { replyAndResolveAddressedThreads } from "../src/github/update.js";
 import type { GithubPrGoalConfig } from "../src/types.js";
@@ -19,6 +24,22 @@ test("parses repositories and PRs", () => {
   assert.deepEqual(parseRepo("https://github.com/owner/my.repo.git"), { owner: "owner", repo: "my.repo", url: "https://github.com/owner/my.repo" });
   assert.equal(parsePr("ignored/repo", "https://github.com/owner/my.repo/pull/5").repository.repo, "my.repo");
   assert.equal(parsePr("ignored/repo", "https://github.com/zikolach/pi-goal-runner/pull/5").prNumber, 5);
+});
+
+test("rejects fork PRs when creating a goal", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
+  try {
+    const store = createGoalStore(dir);
+    const gh: GhExecutor = {
+      run: async (args) => {
+        if (args[0] === "auth") return "";
+        return JSON.stringify({ url: "u", headRefName: "feature", baseRefName: "main", headRepositoryOwner: { login: "contributor" } });
+      },
+    };
+    await assert.rejects(() => createGithubPrGoal(store, gh, "owner/repo", "1"), /Pull requests from forks are not currently supported/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("observes mocked gh output and detects no-op", async () => {

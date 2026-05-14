@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -52,6 +52,36 @@ test("worktree branch argument is separated from git options", async () => {
     await createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "-bad");
 
     await assert.rejects(() => execFileAsync("git", ["-C", repoPath, "show-ref", "--verify", "--quiet", "refs/heads/ad"]));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reused worktree resets branch to fetched remote revision", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-reuse`);
+  const repoPath = path.join(root, "repo");
+  const remotePath = path.join(root, "remote.git");
+  const updaterPath = path.join(root, "updater");
+  const worktreePath = path.join(root, "state", "worktrees", "wt");
+  try {
+    await createRepo(repoPath);
+    await execFileAsync("git", ["-C", repoPath, "branch", "feature"]);
+    await execFileAsync("git", ["init", "--bare", remotePath]);
+    await execFileAsync("git", ["-C", repoPath, "remote", "add", "origin", remotePath]);
+    await execFileAsync("git", ["-C", repoPath, "push", "-u", "origin", "feature"]);
+    await createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "feature");
+
+    await execFileAsync("git", ["clone", remotePath, updaterPath]);
+    await execFileAsync("git", ["-C", updaterPath, "checkout", "feature"]);
+    await execFileAsync("git", ["-C", updaterPath, "config", "user.email", "test@example.com"]);
+    await execFileAsync("git", ["-C", updaterPath, "config", "user.name", "Test User"]);
+    await writeFile(path.join(updaterPath, "file.txt"), "updated");
+    await execFileAsync("git", ["-C", updaterPath, "commit", "-am", "advance"]);
+    await execFileAsync("git", ["-C", updaterPath, "push", "origin", "feature"]);
+
+    await createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "feature");
+
+    assert.equal(await readFile(path.join(worktreePath, "file.txt"), "utf8"), "updated");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -32,14 +32,7 @@ export async function createOrReuseWorktree(paths: StatePaths, repoPath: string,
     reusableWorktree = false;
   }
   if (reusableWorktree) {
-    if (branch) {
-      try {
-        await execFileAsync("git", ["-C", worktreePath, "fetch", "--all", "--prune"], { maxBuffer: 10 * 1024 * 1024 });
-      } catch (error) {
-        const err = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string };
-        throw new Error(`Could not update existing worktree: ${redactText(err.stderr || err.stdout || err.message, 1_000)}`);
-      }
-    }
+    if (branch) await updateExistingWorktree(worktreePath, branch);
     return;
   }
   await prepareWorktreePath(worktreePath);
@@ -51,6 +44,36 @@ export async function createOrReuseWorktree(paths: StatePaths, repoPath: string,
     const err = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string };
     throw new Error(`Could not create worktree: ${redactText(err.stderr || err.stdout || err.message, 1_000)}`);
   }
+}
+
+async function updateExistingWorktree(worktreePath: string, branch: string): Promise<void> {
+  try {
+    await execFileAsync("git", ["-C", worktreePath, "fetch", "--all", "--prune"], { maxBuffer: 10 * 1024 * 1024 });
+    const remoteCommit = await resolveRemoteBranchCommit(worktreePath, branch);
+    try {
+      await execFileAsync("git", ["-C", worktreePath, "switch", "--", branch], { maxBuffer: 10 * 1024 * 1024 });
+    } catch (switchError) {
+      if (!remoteCommit) throw switchError;
+      await execFileAsync("git", ["-C", worktreePath, "switch", "--create", branch, "--track", `origin/${branch}`], { maxBuffer: 10 * 1024 * 1024 });
+    }
+    if (remoteCommit) await execFileAsync("git", ["-C", worktreePath, "reset", "--hard", remoteCommit], { maxBuffer: 10 * 1024 * 1024 });
+  } catch (error) {
+    throw new Error(`Could not update existing worktree: ${formatGitError(error)}`);
+  }
+}
+
+async function resolveRemoteBranchCommit(worktreePath: string, branch: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "--verify", `refs/remotes/origin/${branch}^{commit}`], { maxBuffer: 10 * 1024 * 1024 });
+    return stdout.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatGitError(error: unknown): string {
+  const err = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string };
+  return redactText(err.stderr || err.stdout || err.message || String(error), 1_000);
 }
 
 async function prepareWorktreePath(worktreePath: string): Promise<void> {

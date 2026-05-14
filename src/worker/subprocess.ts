@@ -122,7 +122,7 @@ export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId:
       if (run.id !== runId) return run;
       if (event.type === "complete") return { ...run, completedAt: event.timestamp, status: "success" as const, summary: event.summary, commitSha: event.commitSha, validationResults: event.validationResults };
       if (event.type === "failure") return { ...run, completedAt: event.timestamp, status: forcedStatus ?? "failed", summary: event.message };
-      if (event.type === "decision") return { ...run, status: "needs_decision" as const, summary: event.decision.prompt };
+      if (event.type === "decision") return { ...run, completedAt: event.timestamp, status: "needs_decision" as const, summary: event.decision.prompt };
       return run;
     });
     if (event.type === "progress") return { ...goal, latestProgress: event.message, runHistory };

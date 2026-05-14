@@ -123,7 +123,7 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
             if (event.type === "failure")
                 return { ...run, completedAt: event.timestamp, status: forcedStatus ?? "failed", summary: event.message };
             if (event.type === "decision")
-                return { ...run, status: "needs_decision", summary: event.decision.prompt };
+                return { ...run, completedAt: event.timestamp, status: "needs_decision", summary: event.decision.prompt };
             return run;
         });
         if (event.type === "progress")

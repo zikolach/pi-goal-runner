@@ -1,4 +1,4 @@
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
 export async function ensureDir(dir: string): Promise<void> {

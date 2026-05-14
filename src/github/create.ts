@@ -19,6 +19,10 @@ export async function createGithubPrGoal(store: GoalStore, gh: GhExecutor, repoO
   const repoName = `${parsed.repository.owner}/${parsed.repository.repo}`;
   const prJson = await gh.run(["pr", "view", String(parsed.prNumber), "--repo", repoName, "--json", "url,headRefName,baseRefName,headRepositoryOwner"]);
   const pr = JSON.parse(prJson) as Record<string, unknown>;
+  const headRepositoryOwner = readOwnerLogin(pr.headRepositoryOwner);
+  if (headRepositoryOwner && headRepositoryOwner.toLowerCase() !== parsed.repository.owner.toLowerCase()) {
+    throw new Error(`Pull requests from forks are not currently supported: head repository owner ${headRepositoryOwner} differs from base repository owner ${parsed.repository.owner}`);
+  }
   const schedule = defaultSchedule();
   if (options.quietWindowMs !== undefined) schedule.quietWindow.durationMs = options.quietWindowMs;
   if (options.initialBackoffMs !== undefined) {
@@ -48,4 +52,10 @@ export async function createGithubPrGoal(store: GoalStore, gh: GhExecutor, repoO
     schedule,
     github,
   });
+}
+
+function readOwnerLogin(owner: unknown): string | undefined {
+  if (typeof owner === "string") return owner;
+  if (owner && typeof owner === "object" && "login" in owner && typeof owner.login === "string") return owner.login;
+  return undefined;
 }

@@ -62,8 +62,11 @@ test("worker event ingestion records decisions, completion, failures", async () 
   const t = await tempStore();
   try {
     await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
-    await ingestWorkerEvent(t.store, "g", "r", { type: "decision", goalId: "g", runId: "r", timestamp: new Date().toISOString(), decision: { id: "d", goalId: "g", runId: "r", prompt: "Choose", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
-    assert.equal((await t.store.get("g")).state, "needs_decision");
+    const decisionAt = "2026-01-01T00:00:00Z";
+    await ingestWorkerEvent(t.store, "g", "r", { type: "decision", goalId: "g", runId: "r", timestamp: decisionAt, decision: { id: "d", goalId: "g", runId: "r", prompt: "Choose", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
+    const decisionGoal = await t.store.get("g");
+    assert.equal(decisionGoal.state, "needs_decision");
+    assert.equal(decisionGoal.runHistory.at(-1)?.completedAt, decisionAt);
     await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc" });
     assert.equal((await t.store.get("g")).lastRunSummary, "done");
     await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "quiet", summary: "quiet" });
