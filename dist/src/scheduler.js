@@ -142,7 +142,7 @@ export async function handleSuccessfulWorkerComplete(store, gh, goal, event, han
         await store.update(goal.id, (current) => ({
             ...current,
             github: current.github ? { ...current.github, handledCheckNames: [...new Set([...current.github.handledCheckNames, ...handledCheckNames])] } : current.github,
-        }));
+        }), { updatedAt: event.timestamp });
     }
     if (!goal.github.autoReplyAndResolve)
         return;

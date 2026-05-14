@@ -533,11 +533,15 @@ test("successful worker completion records handled check names", async () => {
       state: "active",
       summary: "g",
       schedule: defaultSchedule(),
+      updatedAt: "2025-01-01T00:00:00.000Z",
       github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
     });
     const gh = { run: async (_args: string[]) => "{}" };
-    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc" }, ["ci", "lint"]);
-    assert.deepEqual((await t.store.get("g")).github?.handledCheckNames, ["ci", "lint"]);
+    const completedAt = "2026-01-01T00:00:00.000Z";
+    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: completedAt, status: "success", summary: "done", commitSha: "abc" }, ["ci", "lint"]);
+    const updated = await t.store.get("g");
+    assert.deepEqual(updated.github?.handledCheckNames, ["ci", "lint"]);
+    assert.equal(updated.updatedAt, completedAt);
   } finally {
     await t.cleanup();
   }
