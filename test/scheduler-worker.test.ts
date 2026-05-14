@@ -539,6 +539,21 @@ test("worker args from env are split with quote awareness", async () => {
   }
 });
 
+test("worker args from env preserve quoted empty arguments", async () => {
+  const t = await tempStore();
+  const previous = process.env.PI_GOAL_WORKER_ARGS;
+  try {
+    process.env.PI_GOAL_WORKER_ARGS = `-e 'if (process.argv[1] !== "") process.exit(2); console.log(JSON.stringify({type:"complete",status:"success",summary:"empty arg preserved"}));' ""`;
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", { command: process.execPath });
+    assert.equal((await t.store.get("g")).lastRunSummary, "empty arg preserved");
+  } finally {
+    if (previous === undefined) delete process.env.PI_GOAL_WORKER_ARGS;
+    else process.env.PI_GOAL_WORKER_ARGS = previous;
+    await t.cleanup();
+  }
+});
+
 test("worker decision terminal event is not overridden by non-zero exit", async () => {
   const t = await tempStore();
   try {
@@ -895,6 +910,34 @@ test("notification command payload file uses restrictive permissions", async () 
     );
     assert.equal(await readFile(outputFile, "utf8"), String(0o600));
   } finally {
+    await t.cleanup();
+  }
+});
+
+test("notification args from env preserve quoted empty arguments", async () => {
+  const t = await tempStore();
+  const previousCommand = process.env.PI_GOAL_NOTIFY_COMMAND;
+  const previousArgs = process.env.PI_GOAL_NOTIFY_ARGS;
+  const previousRelayCommand = process.env.PIRELAY_NOTIFY_COMMAND;
+  const previousRelayArgs = process.env.PIRELAY_NOTIFY_ARGS;
+  try {
+    const outputFile = path.join(t.store.paths.root, "notify-empty-arg.txt");
+    process.env.PI_GOAL_NOTIFY_COMMAND = process.execPath;
+    process.env.PI_GOAL_NOTIFY_ARGS = `-e 'if (process.argv[1] !== "") process.exit(2); require("fs").writeFileSync(process.argv[2], "ok")' "" ${outputFile}`;
+    delete process.env.PIRELAY_NOTIFY_COMMAND;
+    delete process.env.PIRELAY_NOTIFY_ARGS;
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await notifyNonFatal(t.store, createDefaultNotificationSink(), goal, { type: "progress", goalId: "g", timestamp: new Date().toISOString(), message: "hi" });
+    assert.equal(await readFile(outputFile, "utf8"), "ok");
+  } finally {
+    if (previousCommand === undefined) delete process.env.PI_GOAL_NOTIFY_COMMAND;
+    else process.env.PI_GOAL_NOTIFY_COMMAND = previousCommand;
+    if (previousArgs === undefined) delete process.env.PI_GOAL_NOTIFY_ARGS;
+    else process.env.PI_GOAL_NOTIFY_ARGS = previousArgs;
+    if (previousRelayCommand === undefined) delete process.env.PIRELAY_NOTIFY_COMMAND;
+    else process.env.PIRELAY_NOTIFY_COMMAND = previousRelayCommand;
+    if (previousRelayArgs === undefined) delete process.env.PIRELAY_NOTIFY_ARGS;
+    else process.env.PIRELAY_NOTIFY_ARGS = previousRelayArgs;
     await t.cleanup();
   }
 });

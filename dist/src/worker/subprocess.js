@@ -248,7 +248,7 @@ function updateGithubHandledState(goal, event) {
 function workerArgsFromEnv() {
     const configured = process.env.PI_GOAL_WORKER_ARGS;
     if (configured)
-        return splitArgs(configured).filter(Boolean);
+        return splitArgs(configured);
     return ["--print"];
 }
 //# sourceMappingURL=subprocess.js.map

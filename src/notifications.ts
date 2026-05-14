@@ -48,10 +48,10 @@ export class CommandNotificationSink implements NotificationSink {
 
 export function createDefaultNotificationSink(): NotificationSink {
   if (process.env.PI_GOAL_NOTIFY_COMMAND) {
-    return new CommandNotificationSink(process.env.PI_GOAL_NOTIFY_COMMAND, process.env.PI_GOAL_NOTIFY_ARGS ? splitArgs(process.env.PI_GOAL_NOTIFY_ARGS).filter(Boolean) : [], "command");
+    return new CommandNotificationSink(process.env.PI_GOAL_NOTIFY_COMMAND, process.env.PI_GOAL_NOTIFY_ARGS ? splitArgs(process.env.PI_GOAL_NOTIFY_ARGS) : [], "command");
   }
   if (process.env.PIRELAY_NOTIFY_COMMAND) {
-    return new CommandNotificationSink(process.env.PIRELAY_NOTIFY_COMMAND, process.env.PIRELAY_NOTIFY_ARGS ? splitArgs(process.env.PIRELAY_NOTIFY_ARGS).filter(Boolean) : [], "pirelay");
+    return new CommandNotificationSink(process.env.PIRELAY_NOTIFY_COMMAND, process.env.PIRELAY_NOTIFY_ARGS ? splitArgs(process.env.PIRELAY_NOTIFY_ARGS) : [], "pirelay");
   }
   return new NoopNotificationSink();
 }

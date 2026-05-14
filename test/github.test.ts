@@ -56,6 +56,24 @@ test("rejects fork PRs when creating a goal", async () => {
   }
 });
 
+test("defaults PR goal cwd to the current process directory", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
+  try {
+    const store = createGoalStore(dir);
+    const gh: GhExecutor = {
+      run: async (args) => {
+        if (args[0] === "auth") return "";
+        return JSON.stringify({ url: "u", headRefName: "feature", baseRefName: "main", headRepositoryOwner: { login: "owner" } });
+      },
+    };
+    const goal = await createGithubPrGoal(store, gh, "owner/repo", "1");
+    assert.equal(goal.cwd, process.cwd());
+    assert.equal((await store.get(goal.id)).cwd, process.cwd());
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("redacts validation commands before persisting PR goals", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
   try {

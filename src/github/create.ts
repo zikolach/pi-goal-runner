@@ -39,6 +39,7 @@ export async function createGithubPrGoal(store: GoalStore, gh: GhExecutor, repoO
     schedule.backoff.currentMs = initialBackoffMs;
   }
   if (maxBackoffMs !== undefined) schedule.backoff.maxMs = maxBackoffMs;
+  const cwd = options.cwd ?? process.cwd();
   const github: GithubPrGoalConfig = {
     repository: {
       ...parsed.repository,
@@ -57,7 +58,7 @@ export async function createGithubPrGoal(store: GoalStore, gh: GhExecutor, repoO
     type: "github_pr_review",
     state: "active",
     summary: `Watch PR ${repoName}#${parsed.prNumber}`,
-    cwd: options.cwd,
+    cwd,
     schedule,
     github,
   });

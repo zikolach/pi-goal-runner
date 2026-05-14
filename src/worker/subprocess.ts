@@ -247,6 +247,6 @@ function updateGithubHandledState(goal: GoalRecord, event: Extract<GoalEvent, { 
 
 function workerArgsFromEnv(): string[] {
   const configured = process.env.PI_GOAL_WORKER_ARGS;
-  if (configured) return splitArgs(configured).filter(Boolean);
+  if (configured) return splitArgs(configured);
   return ["--print"];
 }
