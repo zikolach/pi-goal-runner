@@ -15,11 +15,11 @@ export function createGoalStore(root) {
             const now = new Date().toISOString();
             const goal = {
                 schemaVersion: 1,
+                ...input,
                 createdAt: input.createdAt ?? now,
                 updatedAt: input.updatedAt ?? now,
                 runHistory: input.runHistory ?? [],
                 pendingDecisions: input.pendingDecisions ?? [],
-                ...input,
                 schedule: input.schedule ?? defaultSchedule(new Date(now)),
             };
             await ensureDir(paths.goalDir(goal.id));

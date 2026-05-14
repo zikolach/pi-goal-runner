@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import { defaultSchedule } from "../src/policy.js";
+import { createGoalStore } from "../src/state/store.js";
 import { createStatePaths } from "../src/state/paths.js";
-import { createOrReuseWorktree } from "../src/worker/worktree.js";
+import { createOrReuseWorktree, ensureGoalWorktree } from "../src/worker/worktree.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +28,33 @@ test("worktree creation fails safely for non-empty invalid path", async () => {
     await mkdir(worktreePath, { recursive: true });
     await writeFile(path.join(worktreePath, "leftover.txt"), "data");
     await assert.rejects(() => createOrReuseWorktree(createStatePaths(root), root, worktreePath, "branch"), /not a valid git worktree and is not empty/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ensureGoalWorktree recreates a missing recorded worktree", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-ensure`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const recordedWorktreePath = path.join(statePath, "worktrees", "g");
+  const store = createGoalStore(statePath);
+  try {
+    await createRepo(repoPath);
+    await execFileAsync("git", ["-C", repoPath, "branch", "feature"]);
+    const goal = await store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r", localPath: repoPath, branch: "feature", worktreePath: recordedWorktreePath }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    const updated = await ensureGoalWorktree(store, goal);
+
+    assert.equal(updated.github?.repository.worktreePath, recordedWorktreePath);
+    assert.equal(await readFile(path.join(recordedWorktreePath, "file.txt"), "utf8"), "data");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

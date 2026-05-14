@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { promisify } from "node:util";
 import type { GoalEvent, GoalRecord } from "./types.js";
 import { appendGoalEvent } from "./state/events.js";
@@ -25,12 +28,21 @@ export class CommandNotificationSink implements NotificationSink {
     this.name = name;
   }
   async notify(goal: GoalRecord, event: GoalEvent): Promise<void> {
-    await execFileAsync(this.command, this.args, {
-      env: { ...process.env, PI_GOAL_NOTIFICATION: JSON.stringify({ goalId: goal.id, event }) },
-      killSignal: "SIGTERM",
-      maxBuffer: 1024 * 1024,
-      timeout: this.timeoutMs,
-    });
+    const tempDir = await mkdtemp(path.join(tmpdir(), "pi-goal-notification-"));
+    const payloadFile = path.join(tempDir, "payload.json");
+    try {
+      await writeFile(payloadFile, JSON.stringify({ goalId: goal.id, event }), "utf8");
+      const env: NodeJS.ProcessEnv = { ...process.env, PI_GOAL_NOTIFICATION_FILE: payloadFile };
+      delete env.PI_GOAL_NOTIFICATION;
+      await execFileAsync(this.command, this.args, {
+        env,
+        killSignal: "SIGTERM",
+        maxBuffer: 1024 * 1024,
+        timeout: this.timeoutMs,
+      });
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   }
 }
 

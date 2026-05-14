@@ -29,6 +29,30 @@ test("creates, lists, gets, and updates goals", async () => {
   }
 });
 
+test("create defaults are not clobbered by undefined option fields", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({
+      id: "goal-1",
+      type: "github_pr_review",
+      state: "active",
+      summary: "safe",
+      createdAt: undefined,
+      updatedAt: undefined,
+      runHistory: undefined,
+      pendingDecisions: undefined,
+      schedule: undefined,
+    } as any);
+    assert.equal(typeof goal.createdAt, "string");
+    assert.equal(typeof goal.updatedAt, "string");
+    assert.deepEqual(goal.runHistory, []);
+    assert.deepEqual(goal.pendingDecisions, []);
+    assert.ok(goal.schedule.nextCheckAt);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("atomic json writes can replace an existing file", async () => {
   const t = await tempStore();
   try {

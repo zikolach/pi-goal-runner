@@ -10,12 +10,12 @@ const execFileAsync = promisify(execFile);
 
 export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord): Promise<GoalRecord> {
   if (!goal.github) return goal;
-  if (goal.github.repository.worktreePath) return goal;
-  const worktreePath = store.paths.worktreeDir(goal.id);
+  const worktreePath = goal.github.repository.worktreePath ?? store.paths.worktreeDir(goal.id);
   const branch = goal.github.repository.branch;
   const repoPath = goal.github.repository.localPath ?? goal.cwd;
   if (!repoPath) throw new Error("Repository local path or cwd is required to create a worktree");
   await createOrReuseWorktree(store.paths, repoPath, worktreePath, branch);
+  if (goal.github.repository.worktreePath === worktreePath) return goal;
   return store.update(goal.id, (current) => ({
     ...current,
     github: current.github ? { ...current.github, repository: { ...current.github.repository, worktreePath } } : current.github,

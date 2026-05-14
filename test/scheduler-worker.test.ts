@@ -412,6 +412,36 @@ test("notification command timeout is recorded as nonfatal failure", async () =>
   }
 });
 
+test("notification command receives payload by temp file instead of environment", async () => {
+  const t = await tempStore();
+  try {
+    const outputFile = path.join(t.store.paths.root, "notification-output.txt");
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await notifyNonFatal(
+      t.store,
+      new CommandNotificationSink(
+        process.execPath,
+        [
+          "-e",
+          [
+            "const fs = require('fs');",
+            "if (process.env.PI_GOAL_NOTIFICATION) process.exit(3);",
+            "const payload = JSON.parse(fs.readFileSync(process.env.PI_GOAL_NOTIFICATION_FILE, 'utf8'));",
+            "fs.writeFileSync(process.argv[1], `${payload.goalId}:${payload.event.message}:${fs.existsSync(process.env.PI_GOAL_NOTIFICATION_FILE)}`);",
+          ].join(""),
+          outputFile,
+        ],
+        "file",
+      ),
+      goal,
+      { type: "progress", goalId: "g", timestamp: new Date().toISOString(), message: "hi" },
+    );
+    assert.equal(await readFile(outputFile, "utf8"), "g:hi:true");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("notification args from env are split with quote awareness", async () => {
   const t = await tempStore();
   const previousCommand = process.env.PI_GOAL_NOTIFY_COMMAND;
