@@ -22,17 +22,18 @@ export interface ObserveGithubPrOptions {
 
 export async function observeGithubPr(gh: GhExecutor, config: GithubPrGoalConfig, options: ObserveGithubPrOptions = {}): Promise<GithubObservation> {
   const repo = `${config.repository.owner}/${config.repository.repo}`;
+  const prNumber = requirePositiveSafePrNumber(config.prNumber);
   const prJson = await gh.run([
     "pr",
     "view",
-    String(config.prNumber),
+    String(prNumber),
     "--repo",
     repo,
     "--json",
     "url,headRefName,headRefOid,statusCheckRollup",
   ]);
   const pr = JSON.parse(prJson) as Record<string, unknown>;
-  const threads = await fetchReviewThreads(gh, config);
+  const threads = await fetchReviewThreads(gh, config, prNumber);
   return {
     observedAt: (options.now ?? new Date()).toISOString(),
     prUrl: typeof pr.url === "string" ? pr.url : config.prUrl,
@@ -43,7 +44,12 @@ export async function observeGithubPr(gh: GhExecutor, config: GithubPrGoalConfig
   };
 }
 
-async function fetchReviewThreads(gh: GhExecutor, config: GithubPrGoalConfig): Promise<unknown[]> {
+function requirePositiveSafePrNumber(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error("GitHub PR number must be a positive safe integer");
+  return value as number;
+}
+
+async function fetchReviewThreads(gh: GhExecutor, config: GithubPrGoalConfig, prNumber: number): Promise<unknown[]> {
   const threads: ReviewThreadNode[] = [];
   let cursor: string | undefined;
   do {
@@ -55,7 +61,7 @@ async function fetchReviewThreads(gh: GhExecutor, config: GithubPrGoalConfig): P
       "-f",
       `name=${config.repository.repo}`,
       "-F",
-      `number=${config.prNumber}`,
+      `number=${prNumber}`,
       ...(cursor ? ["-f", `threadsCursor=${cursor}`] : []),
       "-f",
       "query=query($owner:String!, $name:String!, $number:Int!, $threadsCursor:String) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100, after:$threadsCursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first:100) { pageInfo { hasNextPage endCursor } nodes { id body author { login } url updatedAt } } } } } } }",

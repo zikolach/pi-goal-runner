@@ -1,17 +1,18 @@
 import { redactText } from "../redaction.js";
 export async function observeGithubPr(gh, config, options = {}) {
     const repo = `${config.repository.owner}/${config.repository.repo}`;
+    const prNumber = requirePositiveSafePrNumber(config.prNumber);
     const prJson = await gh.run([
         "pr",
         "view",
-        String(config.prNumber),
+        String(prNumber),
         "--repo",
         repo,
         "--json",
         "url,headRefName,headRefOid,statusCheckRollup",
     ]);
     const pr = JSON.parse(prJson);
-    const threads = await fetchReviewThreads(gh, config);
+    const threads = await fetchReviewThreads(gh, config, prNumber);
     return {
         observedAt: (options.now ?? new Date()).toISOString(),
         prUrl: typeof pr.url === "string" ? pr.url : config.prUrl,
@@ -21,7 +22,12 @@ export async function observeGithubPr(gh, config, options = {}) {
         checks: parseChecks(pr.statusCheckRollup),
     };
 }
-async function fetchReviewThreads(gh, config) {
+function requirePositiveSafePrNumber(value) {
+    if (!Number.isSafeInteger(value) || value < 1)
+        throw new Error("GitHub PR number must be a positive safe integer");
+    return value;
+}
+async function fetchReviewThreads(gh, config, prNumber) {
     const threads = [];
     let cursor;
     do {
@@ -33,7 +39,7 @@ async function fetchReviewThreads(gh, config) {
             "-f",
             `name=${config.repository.repo}`,
             "-F",
-            `number=${config.prNumber}`,
+            `number=${prNumber}`,
             ...(cursor ? ["-f", `threadsCursor=${cursor}`] : []),
             "-f",
             "query=query($owner:String!, $name:String!, $number:Int!, $threadsCursor:String) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100, after:$threadsCursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first:100) { pageInfo { hasNextPage endCursor } nodes { id body author { login } url updatedAt } } } } } } }",

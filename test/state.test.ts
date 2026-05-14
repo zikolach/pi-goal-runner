@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { appendGoalEvent, parseWorkerEventLine } from "../src/state/events.js";
 import { acquireGoalLock, DEFAULT_GOAL_LOCK_STALE_MS } from "../src/state/lock.js";
-import { writeJsonAtomic } from "../src/state/json.js";
+import { replaceFile, writeJsonAtomic } from "../src/state/json.js";
 import { sanitizeGoalId } from "../src/state/paths.js";
 import { applyNoActionPolicy, defaultSchedule, increaseBackoff, quietWindowExpired } from "../src/policy.js";
 import { DEFAULT_WORKER_TIMEOUT_MS } from "../src/worker/subprocess.js";
@@ -109,6 +109,34 @@ test("create defaults are not clobbered by undefined option fields", async () =>
     assert.deepEqual(goal.runHistory, []);
     assert.deepEqual(goal.pendingDecisions, []);
     assert.ok(goal.schedule.nextCheckAt);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("windows file replacement restores the previous file on rename failure", async () => {
+  const t = await tempStore();
+  try {
+    const file = path.join(t.dir, "state.json");
+    const temp = path.join(t.dir, ".state.json.tmp");
+    await writeFile(file, "old", "utf8");
+    await writeFile(temp, "new", "utf8");
+    await assert.rejects(
+      () => replaceFile(temp, file, {
+        windows: true,
+        ops: {
+          rename: async (source, destination) => {
+            if (source === temp && destination === file) {
+              throw Object.assign(new Error("simulated rename failure"), { code: "EPERM" });
+            }
+            await rename(source, destination);
+          },
+          rm,
+        },
+      }),
+      /simulated rename failure/,
+    );
+    assert.equal(await readFile(file, "utf8"), "old");
   } finally {
     await t.cleanup();
   }

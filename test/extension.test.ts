@@ -9,6 +9,26 @@ test("extension completion tokenizer preserves trailing empty argument", () => {
   assert.deepEqual(splitCompletionPrefix("status goal-123"), ["status", "goal-123"]);
 });
 
+test("extension scheduler error handler failures are contained", async () => {
+  const state = { inFlight: false };
+  let handled = 0;
+  const started = runSerializedSchedulerTick(
+    state,
+    async () => {
+      throw new Error("tick failed");
+    },
+    () => {
+      handled++;
+      throw new Error("notify failed");
+    },
+  );
+
+  assert.equal(started, true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(handled, 1);
+  assert.equal(state.inFlight, false);
+});
+
 test("extension scheduler ticks are serialized", async () => {
   const state = { inFlight: false };
   const errors: unknown[] = [];

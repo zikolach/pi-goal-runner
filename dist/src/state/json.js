@@ -30,9 +30,57 @@ export async function writeJsonAtomic(file, value) {
     finally {
         await handle.close();
     }
-    if (process.platform === "win32")
-        await rm(file, { force: true });
-    await rename(temp, file);
+    try {
+        await replaceFile(temp, file);
+    }
+    catch (error) {
+        await rm(temp, { force: true }).catch(() => undefined);
+        throw error;
+    }
+}
+export async function replaceFile(temp, file, options = {}) {
+    const ops = options.ops ?? { rename, rm };
+    const windows = options.windows ?? process.platform === "win32";
+    if (!windows) {
+        await ops.rename(temp, file);
+        return;
+    }
+    const backup = `${temp}.bak`;
+    let hasBackup = false;
+    try {
+        await ops.rename(file, backup);
+        hasBackup = true;
+    }
+    catch (error) {
+        if (!isNodeError(error) || error.code !== "ENOENT")
+            throw error;
+    }
+    try {
+        await ops.rename(temp, file);
+    }
+    catch (error) {
+        if (hasBackup)
+            await restoreBackupAfterFailedReplace(ops, backup, file, error);
+        throw error;
+    }
+    if (hasBackup)
+        await ops.rm(backup, { force: true }).catch(() => undefined);
+}
+async function restoreBackupAfterFailedReplace(ops, backup, file, replaceError) {
+    try {
+        await ops.rename(backup, file);
+        return;
+    }
+    catch (restoreError) {
+        try {
+            await ops.rm(file, { force: true });
+            await ops.rename(backup, file);
+            return;
+        }
+        catch (secondRestoreError) {
+            throw new AggregateError([replaceError, restoreError, secondRestoreError], `Failed to restore ${file} from backup after replace failure`);
+        }
+    }
 }
 export async function removeIfExists(file) {
     await rm(file, { recursive: true, force: true });

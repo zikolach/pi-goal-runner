@@ -8,7 +8,14 @@ export function runSerializedSchedulerTick(state, tick, onError) {
     state.inFlight = true;
     void Promise.resolve()
         .then(tick)
-        .catch(onError)
+        .catch((error) => {
+        try {
+            onError(error);
+        }
+        catch {
+            // Error reporting is best-effort for this fire-and-forget scheduler path.
+        }
+    })
         .finally(() => {
         state.inFlight = false;
     });

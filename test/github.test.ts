@@ -88,6 +88,16 @@ test("validates schedule overrides when creating a goal", async () => {
   }
 });
 
+test("observe rejects corrupted PR numbers before invoking gh", async () => {
+  const gh: GhExecutor = {
+    run: async () => {
+      throw new Error("gh should not be called for invalid durable PR numbers");
+    },
+  };
+  await assert.rejects(() => observeGithubPr(gh, { ...config, prNumber: "@/tmp/secret" as unknown as number }), /positive safe integer/);
+  await assert.rejects(() => observeGithubPr(gh, { ...config, prNumber: 0 }), /positive safe integer/);
+});
+
 test("observes mocked gh output and detects no-op", async () => {
   const calls: string[][] = [];
   const gh: GhExecutor = {
@@ -99,6 +109,10 @@ test("observes mocked gh output and detects no-op", async () => {
   };
   const observation = await observeGithubPr(gh, config, { now: new Date("2026-01-01T01:02:03.000Z") });
   const actionable = findActionable(config, observation);
+  const graphqlCall = calls.find((args) => args[0] === "api" && args[1] === "graphql");
+  assert.ok(graphqlCall);
+  assert.equal(graphqlCall.includes("number=1"), true);
+  assert.equal(graphqlCall.includes("number=@/tmp/secret"), false);
   assert.equal(observation.observedAt, "2026-01-01T01:02:03.000Z");
   assert.equal(actionable.actionable, false);
   assert.equal(calls.length, 2);
