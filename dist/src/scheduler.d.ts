@@ -14,4 +14,4 @@ export interface SchedulerOptions {
 export declare function selectDueGoals(store: GoalStore, now?: Date): Promise<GoalRecord[]>;
 export declare function skipReason(goal: GoalRecord, now?: Date): string | undefined;
 export declare function schedulerTick(store: GoalStore, options?: SchedulerOptions): Promise<SchedulerResult>;
-export declare function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExecutor, goal: GoalRecord, event: CompleteEvent): Promise<void>;
+export declare function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExecutor, goal: GoalRecord, event: CompleteEvent, handledCheckNames?: string[]): Promise<void>;

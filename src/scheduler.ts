@@ -94,13 +94,20 @@ async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sin
   if (options.worker?.dryRun) return true;
   await launchWorker(store, worktreeGoal, prompt, {
     ...options.worker,
-    onComplete: async (completeEvent) => handleSuccessfulWorkerComplete(store, gh, worktreeGoal, completeEvent),
+    onComplete: async (completeEvent) => handleSuccessfulWorkerComplete(store, gh, worktreeGoal, completeEvent, actionable.checks.map((check) => check.name)),
   });
   return true;
 }
 
-export async function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExecutor, goal: GoalRecord, event: CompleteEvent): Promise<void> {
-  if (!goal.github || !goal.github.autoReplyAndResolve) return;
+export async function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExecutor, goal: GoalRecord, event: CompleteEvent, handledCheckNames: string[] = []): Promise<void> {
+  if (!goal.github) return;
+  if (handledCheckNames.length > 0) {
+    await store.update(goal.id, (current) => ({
+      ...current,
+      github: current.github ? { ...current.github, handledCheckNames: [...new Set([...current.github.handledCheckNames, ...handledCheckNames])] } : current.github,
+    }));
+  }
+  if (!goal.github.autoReplyAndResolve) return;
   try {
     const resolvedThreadIds = await replyAndResolveAddressedThreads(gh, goal.github, event);
     if (resolvedThreadIds.length > 0) {

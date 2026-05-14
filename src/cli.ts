@@ -1,10 +1,9 @@
-#!/usr/bin/env node
 import { pathToFileURL } from "node:url";
 import { createGoalStore } from "./state/store.js";
 import { handleGoalCommand } from "./commands.js";
 import { schedulerTick } from "./scheduler.js";
 
-async function main(): Promise<void> {
+export async function main(): Promise<void> {
   const [command = "help", ...args] = process.argv.slice(2);
   const store = createGoalStore();
   await store.init();

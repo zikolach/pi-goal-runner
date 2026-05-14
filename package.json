@@ -5,7 +5,7 @@
   "type": "module",
   "license": "MIT",
   "bin": {
-    "pi-goal-runner": "./dist/src/cli.js"
+    "pi-goal-runner": "./bin/pi-goal-runner.js"
   },
   "keywords": [
     "pi-package",
@@ -14,6 +14,7 @@
     "github"
   ],
   "files": [
+    "bin",
     "dist/src",
     "src",
     "README.md"

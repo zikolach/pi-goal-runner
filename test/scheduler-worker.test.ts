@@ -113,11 +113,12 @@ test("worker event queue continues after one ingestion failure", async () => {
       if (updateCount === 2) throw new Error("transient update failure");
       return realUpdate(goalId, updater);
     };
-    await launchWorker(t.store, goal, "", {
+    await launchWorker(t.store, goal, "secret prompt", {
       command: process.execPath,
       args: [
         "-e",
         [
+          "if (process.env.PI_GOAL_PROMPT) process.exit(2);",
           "console.log(JSON.stringify({type:'progress', message:'one'}));",
           "console.log(JSON.stringify({type:'complete', status:'success', summary:'done'}));",
         ].join(""),
@@ -134,7 +135,7 @@ test("worker stdout events are serialized in emission order", async () => {
   const t = await tempStore();
   try {
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
-    await launchWorker(t.store, goal, "", {
+    await launchWorker(t.store, goal, "secret prompt", {
       command: process.execPath,
       args: [
         "-e",
@@ -195,6 +196,25 @@ test("stale completion does not advance handled timestamps", async () => {
     const updated = await t.store.get("g");
     assert.equal(updated.github?.lastHandledAt, "2026-01-01T00:00:01Z");
     assert.deepEqual(updated.github?.handledThreadIds, ["t1"]);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("successful worker completion records handled check names", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+    const gh = { run: async (_args: string[]) => "{}" };
+    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc" }, ["ci", "lint"]);
+    assert.deepEqual((await t.store.get("g")).github?.handledCheckNames, ["ci", "lint"]);
   } finally {
     await t.cleanup();
   }
