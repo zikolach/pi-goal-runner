@@ -76,6 +76,34 @@ test("worker success completion invokes completion callback", async () => {
   }
 });
 
+test("worker event queue continues after one ingestion failure", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    const realUpdate = t.store.update.bind(t.store);
+    let updateCount = 0;
+    t.store.update = async (goalId, updater) => {
+      updateCount++;
+      if (updateCount === 2) throw new Error("transient update failure");
+      return realUpdate(goalId, updater);
+    };
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "console.log(JSON.stringify({type:'progress', message:'one'}));",
+          "console.log(JSON.stringify({type:'complete', status:'success', summary:'done'}));",
+        ].join(""),
+      ],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.lastRunSummary, "done");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("worker stdout events are serialized in emission order", async () => {
   const t = await tempStore();
   try {

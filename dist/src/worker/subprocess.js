@@ -19,15 +19,20 @@ export async function launchWorker(store, goal, prompt, options = {}) {
         let terminalEventSeen = false;
         let settled = false;
         let ingestionQueue = Promise.resolve();
+        const ingestionFailures = [];
         const enqueueEvent = (event, forcedStatus) => {
             if (event.type === "complete" || event.type === "failure" || event.type === "decision")
                 terminalEventSeen = true;
-            ingestionQueue = ingestionQueue.then(async () => {
-                await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
-                if (event.type === "complete" && event.status === "success")
-                    await options.onComplete?.(event);
+            ingestionQueue = ingestionQueue.catch(() => undefined).then(async () => {
+                try {
+                    await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
+                    if (event.type === "complete" && event.status === "success")
+                        await options.onComplete?.(event);
+                }
+                catch (error) {
+                    ingestionFailures.push(redactText(error instanceof Error ? error.message : String(error), 1_000));
+                }
             });
-            ingestionQueue.catch(() => undefined);
             return ingestionQueue;
         };
         const timer = setTimeout(() => {
@@ -84,7 +89,8 @@ export async function launchWorker(store, goal, prompt, options = {}) {
                     await enqueueEvent(event, "failed");
                 }
                 else if (!terminalEventSeen) {
-                    const event = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: "Worker exited successfully without emitting a terminal event", retryable: true };
+                    const suffix = ingestionFailures.length ? ` (${ingestionFailures.length} ingestion failure(s): ${ingestionFailures.join("; ")})` : "";
+                    const event = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker exited successfully without emitting a terminal event${suffix}`, retryable: true };
                     await enqueueEvent(event, "failed");
                 }
                 resolve(await store.get(goal.id));
