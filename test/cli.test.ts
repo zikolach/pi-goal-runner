@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { parseDaemonInterval, runDaemonTick } from "../src/cli.js";
+import { MAX_DAEMON_INTERVAL_MS, parseDaemonInterval, runDaemonTick } from "../src/cli.js";
 
-test("daemon interval rejects tight-loop values", () => {
+test("daemon interval rejects timer-clamped tight-loop values", () => {
   assert.equal(parseDaemonInterval(undefined), 60_000);
   assert.equal(parseDaemonInterval("1000"), 1_000);
-  assert.throws(() => parseDaemonInterval("0"), />= 1000/);
-  assert.throws(() => parseDaemonInterval("-1"), />= 1000/);
-  assert.throws(() => parseDaemonInterval("nope"), />= 1000/);
+  assert.equal(parseDaemonInterval(String(MAX_DAEMON_INTERVAL_MS)), MAX_DAEMON_INTERVAL_MS);
+  assert.throws(() => parseDaemonInterval("0"), /between 1000/);
+  assert.throws(() => parseDaemonInterval("-1"), /between 1000/);
+  assert.throws(() => parseDaemonInterval("nope"), /between 1000/);
+  assert.throws(() => parseDaemonInterval(String(MAX_DAEMON_INTERVAL_MS + 1)), /between 1000/);
 });
 
 test("generated cli declarations do not include a shebang", async () => {

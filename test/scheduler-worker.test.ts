@@ -58,6 +58,34 @@ test("scheduler uses injected time for quiet policy updates", async () => {
   }
 });
 
+test("scheduler uses injected time when persisting GitHub observation metadata", async () => {
+  const t = await tempStore();
+  try {
+    const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
+    await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule, cwd: process.cwd(), updatedAt: "2025-01-01T00:00:00.000Z", github: { repository: { owner: "o", repo: "r", branch: "old-branch" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] } });
+    const gh = {
+      run: async (args: string[]) =>
+        args[0] === "api"
+          ? JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } })
+          : JSON.stringify({ url: "u", headRefName: "observed-branch", headRefOid: "sha", statusCheckRollup: [] }),
+    };
+    const originalUpdate = t.store.update;
+    let updateCalls = 0;
+    t.store.update = (async (goalId, updater, options) => {
+      updateCalls++;
+      if (updateCalls > 1) throw new Error("stop after observation metadata update");
+      return originalUpdate.call(t.store, goalId, updater, options);
+    }) as typeof t.store.update;
+
+    await assert.rejects(() => schedulerTick(t.store, { gh, now: new Date("2026-01-01T01:00:00Z"), worker: { dryRun: true } }), /stop after observation/);
+    const updated = await t.store.get("g");
+    assert.equal(updated.github?.repository.branch, "observed-branch");
+    assert.equal(updated.updatedAt, "2026-01-01T01:00:00.000Z");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("scheduler catch block applies retry backoff with injected time", async () => {
   const t = await tempStore();
   try {

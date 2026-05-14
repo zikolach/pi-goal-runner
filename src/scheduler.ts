@@ -107,10 +107,18 @@ async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sin
   if (goal.type !== "github_pr_review" || !goal.github) throw new Error(`Unsupported goal type: ${goal.type}`);
   const observation: GithubObservation = await observeGithubPr(gh, goal.github);
   const actionable: ActionableObservation = findActionable(goal.github, observation);
-  await store.update(goal.id, (current) => ({ ...current, github: current.github ? { ...current.github, lastObservedAt: observation.observedAt, repository: { ...current.github.repository, branch: observation.headBranch ?? current.github.repository.branch } } : current.github }));
+  await store.update(
+    goal.id,
+    (current) => ({
+      ...current,
+      updatedAt: now.toISOString(),
+      github: current.github ? { ...current.github, lastObservedAt: observation.observedAt, repository: { ...current.github.repository, branch: observation.headBranch ?? current.github.repository.branch } } : current.github,
+    }),
+    { updatedAt: now.toISOString() },
+  );
   if (!actionable.actionable) {
     const updated = applyNoActionPolicy(await store.get(goal.id), observation.observedAt, now);
-    await store.update(goal.id, () => updated);
+    await store.update(goal.id, () => updated, { updatedAt: now.toISOString() });
     if (updated.state === "completed" || updated.state === "dormant") {
       const event = { type: "complete" as const, goalId: goal.id, timestamp: now.toISOString(), status: "quiet" as const, summary: `Quiet window expired: ${actionable.reason}` };
       await appendGoalEvent(store.paths, event);
@@ -118,7 +126,7 @@ async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sin
     }
     return { launched: false };
   }
-  const actionableGoal = await store.update(goal.id, (current) => applyActionablePolicy(current, now));
+  const actionableGoal = await store.update(goal.id, (current) => applyActionablePolicy(current, now), { updatedAt: now.toISOString() });
   const worktreeGoal = await ensureGoalWorktree(store, actionableGoal);
   const prompt = buildWorkerPrompt(worktreeGoal, observation, actionable);
   const event = { type: "progress" as const, goalId: goal.id, timestamp: now.toISOString(), message: `Launching worker: ${actionable.reason}` };
