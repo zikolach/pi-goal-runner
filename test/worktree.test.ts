@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -28,6 +28,22 @@ test("worktree creation fails safely for non-empty invalid path", async () => {
     await mkdir(worktreePath, { recursive: true });
     await writeFile(path.join(worktreePath, "leftover.txt"), "data");
     await assert.rejects(() => createOrReuseWorktree(createStatePaths(root), root, worktreePath, "branch"), /not a valid git worktree and is not empty/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("createOrReuseWorktree creates the worktrees root with restrictive permissions", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-mode`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const paths = createStatePaths(statePath);
+  const worktreePath = path.join(paths.worktreesDir, "wt");
+  try {
+    await createRepo(repoPath);
+    await createOrReuseWorktree(paths, repoPath, worktreePath);
+
+    assert.equal((await stat(paths.worktreesDir)).mode & 0o777, 0o700);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -1,10 +1,11 @@
 import { execFile } from "node:child_process";
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { readdir, rm, stat } from "node:fs/promises";
 import { promisify } from "node:util";
 import type { GoalRecord } from "../types.js";
 import type { GoalStore } from "../state/store.js";
 import type { StatePaths } from "../state/paths.js";
 import { redactText } from "../redaction.js";
+import { ensureDir } from "../state/json.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -23,7 +24,7 @@ export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord): Pr
 }
 
 export async function createOrReuseWorktree(paths: StatePaths, repoPath: string, worktreePath: string, branch?: string): Promise<void> {
-  await mkdir(paths.worktreesDir, { recursive: true });
+  await ensureDir(paths.worktreesDir);
   let reusableWorktree = false;
   try {
     const { stdout } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "--is-inside-work-tree"], { maxBuffer: 10 * 1024 * 1024 });
