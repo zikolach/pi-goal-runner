@@ -7,7 +7,7 @@ import { createGoalStore } from "../src/state/store.js";
 import { defaultSchedule } from "../src/policy.js";
 import { handleSuccessfulWorkerComplete, selectDueGoals, schedulerTick } from "../src/scheduler.js";
 import { ingestWorkerEvent, launchWorker } from "../src/worker/subprocess.js";
-import { createDefaultNotificationSink, notifyNonFatal } from "../src/notifications.js";
+import { CommandNotificationSink, createDefaultNotificationSink, notifyNonFatal } from "../src/notifications.js";
 
 async function tempStore() {
   const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-scheduler-"));
@@ -123,6 +123,7 @@ test("worker event queue continues after one ingestion failure", async () => {
           "console.log(JSON.stringify({type:'complete', status:'success', summary:'done'}));",
         ].join(""),
       ],
+      env: { PI_GOAL_PROMPT: "do not forward" },
     });
     const updated = await t.store.get("g");
     assert.equal(updated.lastRunSummary, "done");
@@ -292,6 +293,24 @@ test("notification failure is nonfatal", async () => {
     await notifyNonFatal(t.store, { name: "bad", notify: async () => { throw new Error("boom"); } }, goal, { type: "progress", goalId: "g", timestamp: new Date().toISOString(), message: "hi" });
     assert.equal((await t.store.get("g")).state, "active");
     assert.equal(createDefaultNotificationSink().name, "noop");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("notification command timeout is recorded as nonfatal failure", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await notifyNonFatal(
+      t.store,
+      new CommandNotificationSink(process.execPath, ["-e", "setTimeout(() => {}, 10000);"], "slow", 50),
+      goal,
+      { type: "progress", goalId: "g", timestamp: new Date().toISOString(), message: "hi" },
+    );
+    const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
+    assert.match(events, /"status":"failed"/);
+    assert.equal((await t.store.get("g")).state, "active");
   } finally {
     await t.cleanup();
   }

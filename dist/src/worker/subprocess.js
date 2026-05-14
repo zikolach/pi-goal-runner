@@ -12,7 +12,9 @@ export async function launchWorker(store, goal, prompt, options = {}) {
     const cwd = options.cwd ?? goal.github?.repository.worktreePath ?? goal.cwd ?? process.cwd();
     const timeoutMs = options.timeoutMs ?? 45 * 60_000;
     return new Promise((resolve) => {
-        const child = spawn(command, args, { cwd, env: { ...process.env, ...options.env }, stdio: ["pipe", "pipe", "pipe"] });
+        const childEnv = { ...process.env, ...options.env };
+        delete childEnv.PI_GOAL_PROMPT;
+        const child = spawn(command, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
         child.stdin.end(prompt);
         let stdoutBuffer = "";
         let stderr = "";

@@ -11,8 +11,9 @@ export declare class NoopNotificationSink implements NotificationSink {
 export declare class CommandNotificationSink implements NotificationSink {
     private command;
     private args;
+    private timeoutMs;
     name: string;
-    constructor(command: string, args?: string[], name?: string);
+    constructor(command: string, args?: string[], name?: string, timeoutMs?: number);
     notify(goal: GoalRecord, event: GoalEvent): Promise<void>;
 }
 export declare function createDefaultNotificationSink(): NotificationSink;

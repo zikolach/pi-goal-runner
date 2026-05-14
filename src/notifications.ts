@@ -6,6 +6,7 @@ import type { GoalStore } from "./state/store.js";
 import { redactText } from "./redaction.js";
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_NOTIFICATION_TIMEOUT_MS = 30_000;
 
 export interface NotificationSink {
   name: string;
@@ -19,13 +20,15 @@ export class NoopNotificationSink implements NotificationSink {
 
 export class CommandNotificationSink implements NotificationSink {
   name: string;
-  constructor(private command: string, private args: string[] = [], name = "command") {
+  constructor(private command: string, private args: string[] = [], name = "command", private timeoutMs = DEFAULT_NOTIFICATION_TIMEOUT_MS) {
     this.name = name;
   }
   async notify(goal: GoalRecord, event: GoalEvent): Promise<void> {
     await execFileAsync(this.command, this.args, {
       env: { ...process.env, PI_GOAL_NOTIFICATION: JSON.stringify({ goalId: goal.id, event }) },
+      killSignal: "SIGTERM",
       maxBuffer: 1024 * 1024,
+      timeout: this.timeoutMs,
     });
   }
 }

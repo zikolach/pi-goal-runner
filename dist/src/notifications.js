@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 import { appendGoalEvent } from "./state/events.js";
 import { redactText } from "./redaction.js";
 const execFileAsync = promisify(execFile);
+const DEFAULT_NOTIFICATION_TIMEOUT_MS = 30_000;
 export class NoopNotificationSink {
     name = "noop";
     async notify() { }
@@ -10,16 +11,20 @@ export class NoopNotificationSink {
 export class CommandNotificationSink {
     command;
     args;
+    timeoutMs;
     name;
-    constructor(command, args = [], name = "command") {
+    constructor(command, args = [], name = "command", timeoutMs = DEFAULT_NOTIFICATION_TIMEOUT_MS) {
         this.command = command;
         this.args = args;
+        this.timeoutMs = timeoutMs;
         this.name = name;
     }
     async notify(goal, event) {
         await execFileAsync(this.command, this.args, {
             env: { ...process.env, PI_GOAL_NOTIFICATION: JSON.stringify({ goalId: goal.id, event }) },
+            killSignal: "SIGTERM",
             maxBuffer: 1024 * 1024,
+            timeout: this.timeoutMs,
         });
     }
 }

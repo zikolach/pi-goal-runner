@@ -22,7 +22,9 @@ export async function ensureGoalWorktree(store, goal) {
 export async function createOrReuseWorktree(paths, repoPath, worktreePath, branch) {
     await mkdir(paths.worktreesDir, { recursive: true });
     try {
-        await execFileAsync("git", ["-C", worktreePath, "rev-parse", "--is-inside-work-tree"]);
+        const { stdout } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "--is-inside-work-tree"]);
+        if (stdout.trim() !== "true")
+            throw new Error(`Path is not a git worktree: ${worktreePath}`);
         if (branch)
             await execFileAsync("git", ["-C", worktreePath, "fetch", "--all", "--prune"]);
         return;
@@ -33,7 +35,7 @@ export async function createOrReuseWorktree(paths, repoPath, worktreePath, branc
     await prepareWorktreePath(worktreePath);
     const args = ["-C", repoPath, "worktree", "add", worktreePath];
     if (branch)
-        args.push(branch);
+        args.push("--", branch);
     try {
         await execFileAsync("git", args, { maxBuffer: 10 * 1024 * 1024 });
     }
