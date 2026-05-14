@@ -5,7 +5,8 @@ const SECRET_PATTERNS = [
     /xox[baprs]-[A-Za-z0-9-]{20,}/g,
 ];
 const PREFIXED_SECRET_PATTERNS = [
-    /([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|KEY)[A-Z0-9_]*=)([^\s]+)/gi,
+    /([A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD)[A-Z0-9_]*=)([^\s]+)/gi,
+    /((?:^|[^A-Z0-9_])(?:[A-Z0-9]+_)*KEY(?:_[A-Z0-9]+)*=)([^\s]+)/gi,
     /(Authorization:\s*(?:Bearer|token)\s+)([^\s'"`]+)/gi,
 ];
 export const DEFAULT_MAX_TEXT = 4_000;

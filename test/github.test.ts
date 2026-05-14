@@ -92,6 +92,23 @@ test("redacts validation commands before persisting PR goals", async () => {
   }
 });
 
+test("validation command redaction preserves non-secret key substrings", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
+  try {
+    const store = createGoalStore(dir);
+    const gh: GhExecutor = {
+      run: async (args) => {
+        if (args[0] === "auth") return "";
+        return JSON.stringify({ url: "u", headRefName: "feature", baseRefName: "main", headRepositoryOwner: { login: "owner" } });
+      },
+    };
+    const goal = await createGithubPrGoal(store, gh, "owner/repo", "1", { validationCommands: ["monkey=1 npm test", "API_KEY=secret npm test"] });
+    assert.deepEqual(goal.github?.validationCommands, ["monkey=1 npm test", "API_KEY=[REDACTED] npm test"]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("rejects oversized validation commands instead of truncating them", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
   try {

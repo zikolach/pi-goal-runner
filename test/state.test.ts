@@ -29,6 +29,8 @@ test("blank state root env falls back to the home state directory", () => {
     assert.equal(defaultStateRoot(), fallback);
     process.env.PI_GOAL_STATE_DIR = "/tmp/pi-goals";
     assert.equal(defaultStateRoot(), "/tmp/pi-goals");
+    process.env.PI_GOAL_STATE_DIR = "  /tmp/pi-goals  ";
+    assert.equal(defaultStateRoot(), "/tmp/pi-goals");
   } finally {
     if (original === undefined) delete process.env.PI_GOAL_STATE_DIR;
     else process.env.PI_GOAL_STATE_DIR = original;
@@ -282,6 +284,9 @@ test("goal updates can preserve an explicit unchanged updatedAt", async () => {
 test("redaction does not leak regex offsets for token patterns", () => {
   assert.equal(redactText("token ghp_1234567890123456789012345"), "token [REDACTED]");
   assert.equal(redactText("API_TOKEN=secret-value"), "API_TOKEN=[REDACTED]");
+  assert.equal(redactText("API_KEY=secret-value"), "API_KEY=[REDACTED]");
+  assert.equal(redactText("KEY=secret-value"), "KEY=[REDACTED]");
+  assert.equal(redactText("monkey=1 npm test"), "monkey=1 npm test");
   assert.equal(redactText("curl -H 'Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz'"), "curl -H 'Authorization: Bearer [REDACTED]'");
 });
 
