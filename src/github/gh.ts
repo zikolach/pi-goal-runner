@@ -39,7 +39,8 @@ export function parseRepo(input: string): { owner: string; repo: string; url?: s
 }
 
 export function parsePr(repoOrUrl: string, prInput: string): { repository: { owner: string; repo: string; url?: string }; prNumber: number; prUrl?: string } {
-  const prUrlMatch = prInput.match(/github\.com[:/]([^/]+)\/([^/?#]+)\/pull\/(\d+)/);
+  const trimmedPrInput = prInput.trim();
+  const prUrlMatch = trimmedPrInput.match(/github\.com[:/]([^/]+)\/([^/?#]+)\/pull\/(\d+)/);
   if (prUrlMatch) {
     const owner = prUrlMatch[1];
     const repo = stripGitSuffix(prUrlMatch[2]);
@@ -47,8 +48,8 @@ export function parsePr(repoOrUrl: string, prInput: string): { repository: { own
     return { repository: { owner, repo, url: normalizedRepoUrl(owner, repo) }, prNumber, prUrl: `https://github.com/${owner}/${repo}/pull/${prNumber}` };
   }
   const repo = parseRepo(repoOrUrl);
-  const numberMatch = prInput.match(/\d+/);
-  if (!numberMatch) throw new Error("PR number or PR URL is required");
+  const numberMatch = trimmedPrInput.match(/^\d+$/);
+  if (!numberMatch) throw new Error("PR must be a GitHub PR URL or an integer PR number");
   const prNumber = Number(numberMatch[0]);
   return { repository: repo, prNumber, prUrl: `https://github.com/${repo.owner}/${repo.repo}/pull/${prNumber}` };
 }

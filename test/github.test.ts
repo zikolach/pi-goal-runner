@@ -24,6 +24,9 @@ test("parses repositories and PRs", () => {
   assert.deepEqual(parseRepo("https://github.com/owner/my.repo.git"), { owner: "owner", repo: "my.repo", url: "https://github.com/owner/my.repo" });
   assert.equal(parsePr("ignored/repo", "https://github.com/owner/my.repo/pull/5").repository.repo, "my.repo");
   assert.equal(parsePr("ignored/repo", "https://github.com/zikolach/pi-goal-runner/pull/5").prNumber, 5);
+  assert.equal(parsePr("zikolach/pi-goal-runner", " 123 ").prNumber, 123);
+  assert.throws(() => parsePr("zikolach/pi-goal-runner", "release-123"), /integer PR number/);
+  assert.throws(() => parsePr("zikolach/pi-goal-runner", "v2"), /integer PR number/);
 });
 
 test("rejects fork PRs when creating a goal", async () => {
