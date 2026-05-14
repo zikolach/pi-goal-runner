@@ -58,7 +58,14 @@ export async function schedulerTick(store: GoalStore, options: SchedulerOptions 
     }
     let releaseLock = true;
     try {
-      if (goal.state === "running") {
+      const lockedGoal = await store.get(goal.id);
+      const lockedReason = skipReason(lockedGoal, now);
+      if (lockedReason) {
+        result.skipped++;
+        result.messages.push(`${goal.id}: ${lockedReason}`);
+        continue;
+      }
+      if (lockedGoal.state === "running") {
         result.failures++;
         const message = "Recovered abandoned running goal after missing or stale worker lock";
         await appendGoalEvent(store.paths, { type: "failure", goalId: goal.id, timestamp: now.toISOString(), message, retryable: true });
@@ -76,7 +83,7 @@ export async function schedulerTick(store: GoalStore, options: SchedulerOptions 
         result.messages.push(`${goal.id}: ${message}`);
         continue;
       }
-      const outcome = await checkGoal(store, goal, gh, sink, options);
+      const outcome = await checkGoal(store, lockedGoal, gh, sink, options);
       if (outcome.launched) result.launched++;
       if (outcome.workerDone) {
         releaseLock = false;

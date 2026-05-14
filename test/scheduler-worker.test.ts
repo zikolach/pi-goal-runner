@@ -162,6 +162,47 @@ test("scheduler dry-run launch defers next check to avoid repeated launch intent
   }
 });
 
+test("scheduler reloads and rechecks goal state after acquiring lock", async () => {
+  const t = await tempStore();
+  try {
+    const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
+    await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule,
+      cwd: process.cwd(),
+      github: { repository: { owner: "o", repo: "r", localPath: process.cwd(), worktreePath: process.cwd() }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+    const originalList = t.store.list;
+    t.store.list = (async () => {
+      const goals = await originalList.call(t.store);
+      await t.store.setState("g", "paused");
+      return goals;
+    }) as typeof t.store.list;
+    let ghCalls = 0;
+    const gh = {
+      run: async (args: string[]) => {
+        ghCalls++;
+        return args[0] === "api"
+          ? JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [{ id: "t1", isResolved: false, isOutdated: false, comments: { nodes: [{ id: "c1", body: "fix", updatedAt: "2026-01-01T00:00:00Z" }] } }] } } } } })
+          : JSON.stringify({ url: "u", statusCheckRollup: [] });
+      },
+    };
+
+    const result = await schedulerTick(t.store, { gh, now: new Date("2026-01-01T00:00:00Z"), worker: { dryRun: true } });
+
+    assert.equal(result.launched, 0);
+    assert.equal(result.skipped, 1);
+    assert.equal(ghCalls, 0);
+    assert.equal((await t.store.get("g")).state, "paused");
+    await assert.rejects(() => readFile(path.join(t.store.paths.lockDir("g"), "owner.json"), "utf8"), /ENOENT/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("scheduler recovers running goals when worker lock is missing", async () => {
   const t = await tempStore();
   try {
