@@ -338,6 +338,23 @@ test("worker stdout events are serialized in emission order", async () => {
   }
 });
 
+test("worker final stdout line strips trailing carriage return", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\r');"],
+    });
+    const updated = await t.store.get("g");
+    const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
+    assert.equal(updated.lastRunSummary, "done");
+    assert.doesNotMatch(events, /Malformed worker event/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("worker stdout without newlines is bounded and records failure", async () => {
   const t = await tempStore();
   try {

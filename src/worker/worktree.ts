@@ -9,7 +9,7 @@ import { ensureDir } from "../state/json.js";
 
 const execFileAsync = promisify(execFile);
 
-export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord): Promise<GoalRecord> {
+export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord, options: { updatedAt?: string } = {}): Promise<GoalRecord> {
   if (!goal.github) return goal;
   const worktreePath = goal.github.repository.worktreePath ?? store.paths.worktreeDir(goal.id);
   const branch = goal.github.repository.branch;
@@ -17,10 +17,14 @@ export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord): Pr
   if (!repoPath) throw new Error("Repository local path or cwd is required to create a worktree");
   await createOrReuseWorktree(store.paths, repoPath, worktreePath, branch);
   if (goal.github.repository.worktreePath === worktreePath) return goal;
-  return store.update(goal.id, (current) => ({
-    ...current,
-    github: current.github ? { ...current.github, repository: { ...current.github.repository, worktreePath } } : current.github,
-  }));
+  return store.update(
+    goal.id,
+    (current) => ({
+      ...current,
+      github: current.github ? { ...current.github, repository: { ...current.github.repository, worktreePath } } : current.github,
+    }),
+    options.updatedAt ? { updatedAt: options.updatedAt } : undefined,
+  );
 }
 
 export async function createOrReuseWorktree(paths: StatePaths, repoPath: string, worktreePath: string, branch?: string): Promise<void> {

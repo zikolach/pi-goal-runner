@@ -76,6 +76,35 @@ test("ensureGoalWorktree recreates a missing recorded worktree", async () => {
   }
 });
 
+test("ensureGoalWorktree uses caller timestamp when assigning worktree path", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-updated-at`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const store = createGoalStore(statePath);
+  const updatedAt = "2026-01-01T01:00:00.000Z";
+  try {
+    await createRepo(repoPath);
+    await execFileAsync("git", ["-C", repoPath, "branch", "feature"]);
+    const goal = await store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      updatedAt: "2025-01-01T00:00:00.000Z",
+      github: { repository: { owner: "o", repo: "r", localPath: repoPath, branch: "feature" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    const updated = await ensureGoalWorktree(store, goal, { updatedAt });
+
+    assert.equal(updated.github?.repository.worktreePath, store.paths.worktreeDir("g"));
+    assert.equal(updated.updatedAt, updatedAt);
+    assert.equal((await store.get("g")).updatedAt, updatedAt);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("worktree reuse requires rev-parse to report a real worktree", async () => {
   const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-bare`);
   const worktreePath = path.join(root, "bare.git");

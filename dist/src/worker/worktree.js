@@ -4,7 +4,7 @@ import { promisify } from "node:util";
 import { redactText } from "../redaction.js";
 import { ensureDir } from "../state/json.js";
 const execFileAsync = promisify(execFile);
-export async function ensureGoalWorktree(store, goal) {
+export async function ensureGoalWorktree(store, goal, options = {}) {
     if (!goal.github)
         return goal;
     const worktreePath = goal.github.repository.worktreePath ?? store.paths.worktreeDir(goal.id);
@@ -18,7 +18,7 @@ export async function ensureGoalWorktree(store, goal) {
     return store.update(goal.id, (current) => ({
         ...current,
         github: current.github ? { ...current.github, repository: { ...current.github.repository, worktreePath } } : current.github,
-    }));
+    }), options.updatedAt ? { updatedAt: options.updatedAt } : undefined);
 }
 export async function createOrReuseWorktree(paths, repoPath, worktreePath, branch) {
     await ensureDir(paths.worktreesDir);

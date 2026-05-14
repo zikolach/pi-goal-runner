@@ -127,7 +127,7 @@ async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sin
     return { launched: false };
   }
   const actionableGoal = await store.update(goal.id, (current) => applyActionablePolicy(current, now), { updatedAt: now.toISOString() });
-  const worktreeGoal = await ensureGoalWorktree(store, actionableGoal);
+  const worktreeGoal = await ensureGoalWorktree(store, actionableGoal, { updatedAt: now.toISOString() });
   const prompt = buildWorkerPrompt(worktreeGoal, observation, actionable);
   const event = { type: "progress" as const, goalId: goal.id, timestamp: now.toISOString(), message: `Launching worker: ${actionable.reason}` };
   await appendGoalEvent(store.paths, event);

@@ -88,9 +88,10 @@ export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: st
       }
       stdoutBuffer += fragment;
     };
+    const normalizedStdoutBuffer = () => (stdoutBuffer.endsWith("\r") ? stdoutBuffer.slice(0, -1) : stdoutBuffer);
     const emitBufferedStdoutLine = () => {
       if (stdoutOverflowed) return;
-      const line = stdoutBuffer.endsWith("\r") ? stdoutBuffer.slice(0, -1) : stdoutBuffer;
+      const line = normalizedStdoutBuffer();
       stdoutBuffer = "";
       if (line.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, line));
     };
@@ -140,7 +141,7 @@ export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: st
       if (settled) return;
       settled = true;
       void (async () => {
-        if (!stdoutOverflowed && stdoutBuffer.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, stdoutBuffer));
+        if (!stdoutOverflowed && stdoutBuffer.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, normalizedStdoutBuffer()));
         await ingestionQueue;
         if (terminalEventType) {
           // Worker protocol terminal events are authoritative; process exit status
