@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { appendGoalEvent, parseWorkerEventLine } from "../src/state/events.js";
 import { acquireGoalLock, DEFAULT_GOAL_LOCK_STALE_MS } from "../src/state/lock.js";
 import { replaceFile, writeJsonAtomic } from "../src/state/json.js";
-import { sanitizeGoalId } from "../src/state/paths.js";
+import { defaultStateRoot, sanitizeGoalId } from "../src/state/paths.js";
 import { applyNoActionPolicy, defaultSchedule, increaseBackoff, quietWindowExpired } from "../src/policy.js";
 import { DEFAULT_WORKER_TIMEOUT_MS } from "../src/worker/subprocess.js";
 import { redactText } from "../src/redaction.js";
@@ -16,6 +16,24 @@ async function tempStore() {
   const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-"));
   return { dir, store: createGoalStore(dir), cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
+
+test("blank state root env falls back to the home state directory", () => {
+  const original = process.env.PI_GOAL_STATE_DIR;
+  try {
+    delete process.env.PI_GOAL_STATE_DIR;
+    const fallback = path.join(homedir(), ".pi", "agent", "goals");
+    assert.equal(defaultStateRoot(), fallback);
+    process.env.PI_GOAL_STATE_DIR = "";
+    assert.equal(defaultStateRoot(), fallback);
+    process.env.PI_GOAL_STATE_DIR = "   \t";
+    assert.equal(defaultStateRoot(), fallback);
+    process.env.PI_GOAL_STATE_DIR = "/tmp/pi-goals";
+    assert.equal(defaultStateRoot(), "/tmp/pi-goals");
+  } finally {
+    if (original === undefined) delete process.env.PI_GOAL_STATE_DIR;
+    else process.env.PI_GOAL_STATE_DIR = original;
+  }
+});
 
 test("creates, lists, gets, and updates goals", async () => {
   const t = await tempStore();

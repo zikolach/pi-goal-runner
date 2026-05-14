@@ -11,10 +11,12 @@ export function addPendingDecision(goal: GoalRecord, decision: DecisionRecord): 
     options: decision.options.map((option) => ({ id: redactText(option.id, 80), label: redactText(option.label, 120) })),
     status: "pending",
   };
+  const pendingDecisions = [...goal.pendingDecisions.filter((existing) => existing.id !== safe.id), safe];
+  const hasPendingRequiredDecision = pendingDecisions.some((item) => item.status === "pending" && item.required);
   return {
     ...goal,
-    state: "needs_decision",
-    pendingDecisions: [...goal.pendingDecisions.filter((existing) => existing.id !== safe.id), safe],
+    state: hasPendingRequiredDecision ? "needs_decision" : goal.state === "running" || goal.state === "needs_decision" ? "active" : goal.state,
+    pendingDecisions,
   };
 }
 
@@ -35,12 +37,16 @@ export async function answerDecision(store: GoalStore, decisionId: string, choic
     }
     const now = new Date().toISOString();
     const nextDecision: DecisionRecord = { ...decision, status: "answered", answer: choice, answeredAt: now };
-    await store.update(goal.id, (latest) => ({
-      ...latest,
-      state: latest.state === "needs_decision" ? "active" : latest.state,
-      pendingDecisions: latest.pendingDecisions.map((item) => (item.id === decisionId ? nextDecision : item)),
-      schedule: { ...latest.schedule, nextCheckAt: now },
-    }));
+    await store.update(goal.id, (latest) => {
+      const pendingDecisions = latest.pendingDecisions.map((item) => (item.id === decisionId ? nextDecision : item));
+      const hasPendingRequiredDecision = pendingDecisions.some((item) => item.status === "pending" && item.required);
+      return {
+        ...latest,
+        state: latest.state === "needs_decision" && !hasPendingRequiredDecision ? "active" : latest.state,
+        pendingDecisions,
+        schedule: { ...latest.schedule, nextCheckAt: now },
+      };
+    });
     return nextDecision;
   });
   if (!answered) throw new Error(`Goal ${goal.id} is busy; try again later`);

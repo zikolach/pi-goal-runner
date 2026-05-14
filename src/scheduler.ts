@@ -30,8 +30,8 @@ export async function selectDueGoals(store: GoalStore, now = new Date()): Promis
 export function skipReason(goal: GoalRecord, now = new Date()): string | undefined {
   if (isTerminal(goal.state)) return `terminal state ${goal.state}`;
   if (goal.state === "paused") return "paused";
-  if (goal.state === "needs_decision") return "waiting for user decision";
-  if (goal.pendingDecisions.some((decision) => decision.status === "pending")) return "waiting for user decision";
+  if (goal.state === "needs_decision") return "waiting for required user decision";
+  if (goal.pendingDecisions.some((decision) => decision.status === "pending" && decision.required)) return "waiting for required user decision";
   if (!isDue(goal, now)) return `not due until ${goal.schedule.nextCheckAt}`;
   return undefined;
 }

@@ -2,7 +2,10 @@ import { homedir } from "node:os";
 import path from "node:path";
 const RESERVED_GOAL_IDS = new Set(["worktrees"]);
 export function defaultStateRoot() {
-    return process.env.PI_GOAL_STATE_DIR ?? path.join(homedir(), ".pi", "agent", "goals");
+    const configured = process.env.PI_GOAL_STATE_DIR;
+    if (configured && configured.trim().length > 0)
+        return configured;
+    return path.join(homedir(), ".pi", "agent", "goals");
 }
 export function createStatePaths(root = defaultStateRoot()) {
     const goalsDir = root;

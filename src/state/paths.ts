@@ -15,7 +15,9 @@ export interface StatePaths {
 }
 
 export function defaultStateRoot(): string {
-  return process.env.PI_GOAL_STATE_DIR ?? path.join(homedir(), ".pi", "agent", "goals");
+  const configured = process.env.PI_GOAL_STATE_DIR;
+  if (configured && configured.trim().length > 0) return configured;
+  return path.join(homedir(), ".pi", "agent", "goals");
 }
 
 export function createStatePaths(root = defaultStateRoot()): StatePaths {
