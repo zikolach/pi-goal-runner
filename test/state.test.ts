@@ -168,13 +168,24 @@ test("default lock staleness exceeds the default worker timeout", () => {
 test("per-goal locks exclude concurrent holders", async () => {
   const t = await tempStore();
   try {
-    await t.store.init();
+    await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe", schedule: defaultSchedule() });
     const first = await acquireGoalLock(t.store.paths, "goal-1");
     assert.ok(first);
     const second = await acquireGoalLock(t.store.paths, "goal-1");
     assert.equal(second, undefined);
     await first.release();
     assert.ok(await acquireGoalLock(t.store.paths, "goal-1"));
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("acquiring a lock for an unknown goal does not create a goal directory", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.init();
+    await assert.rejects(() => acquireGoalLock(t.store.paths, "missing-goal"), /Unknown goal: missing-goal/);
+    await assert.rejects(() => stat(t.store.paths.goalDir("missing-goal")), /ENOENT/);
   } finally {
     await t.cleanup();
   }

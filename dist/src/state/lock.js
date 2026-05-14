@@ -4,12 +4,15 @@ import { ensureDir } from "./json.js";
 export const DEFAULT_GOAL_LOCK_STALE_MS = 50 * 60_000;
 export async function acquireGoalLock(paths, goalId, staleMs = DEFAULT_GOAL_LOCK_STALE_MS) {
     const lockPath = paths.lockDir(goalId);
-    await ensureDir(paths.goalDir(goalId));
+    await ensureDir(paths.root);
     try {
         await mkdir(lockPath, { recursive: false, mode: 0o700 });
     }
     catch (error) {
-        if (error.code !== "EEXIST")
+        const code = error.code;
+        if (code === "ENOENT")
+            throw new Error(`Unknown goal: ${goalId}`, { cause: error });
+        if (code !== "EEXIST")
             throw error;
         if (await isStale(lockPath, staleMs)) {
             await rm(lockPath, { recursive: true, force: true });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -65,6 +65,17 @@ test("state-mutating commands respect active goal locks", async () => {
       await lock.release();
     }
     assert.match(await handleGoalCommand(t.store, "pause g1"), /paused/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("state-mutating commands do not create unknown goal directories", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.init();
+    await assert.rejects(() => handleGoalCommand(t.store, "pause missing-goal"), /Unknown goal: missing-goal/);
+    await assert.rejects(() => stat(t.store.paths.goalDir("missing-goal")), /ENOENT/);
   } finally {
     await t.cleanup();
   }

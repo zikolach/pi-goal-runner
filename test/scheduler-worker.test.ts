@@ -535,6 +535,20 @@ test("notification failure is nonfatal", async () => {
   }
 });
 
+test("notification event logging failures are nonfatal", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await mkdir(t.store.paths.eventsFile("g"));
+    const event = { type: "progress" as const, goalId: "g", timestamp: new Date().toISOString(), message: "hi" };
+    await notifyNonFatal(t.store, { name: "ok", notify: async () => {} }, goal, event);
+    await notifyNonFatal(t.store, { name: "bad", notify: async () => { throw new Error("boom"); } }, goal, event);
+    assert.equal((await t.store.get("g")).state, "active");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("notification events use triggering event timestamp", async () => {
   const t = await tempStore();
   try {

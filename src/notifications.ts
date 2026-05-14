@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { GoalEvent, GoalRecord } from "./types.js";
+import type { GoalEvent, GoalRecord, NotificationEvent } from "./types.js";
 import { appendGoalEvent } from "./state/events.js";
 import type { GoalStore } from "./state/store.js";
 import { redactText } from "./redaction.js";
@@ -59,8 +59,17 @@ export function createDefaultNotificationSink(): NotificationSink {
 export async function notifyNonFatal(store: GoalStore, sink: NotificationSink, goal: GoalRecord, event: GoalEvent): Promise<void> {
   try {
     await sink.notify(goal, event);
-    if (sink.name !== "noop") await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "sent", message: event.type });
   } catch (error) {
-    await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "failed", message: redactText(error instanceof Error ? error.message : String(error), 1_000) });
+    await appendNotificationEventNonFatal(store, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "failed", message: redactText(error instanceof Error ? error.message : String(error), 1_000) });
+    return;
+  }
+  if (sink.name !== "noop") await appendNotificationEventNonFatal(store, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "sent", message: event.type });
+}
+
+async function appendNotificationEventNonFatal(store: GoalStore, event: NotificationEvent): Promise<void> {
+  try {
+    await appendGoalEvent(store.paths, event);
+  } catch {
+    // Notification event logging is best-effort and must not make notifyNonFatal throw.
   }
 }

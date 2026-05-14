@@ -54,11 +54,20 @@ export function createDefaultNotificationSink() {
 export async function notifyNonFatal(store, sink, goal, event) {
     try {
         await sink.notify(goal, event);
-        if (sink.name !== "noop")
-            await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "sent", message: event.type });
     }
     catch (error) {
-        await appendGoalEvent(store.paths, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "failed", message: redactText(error instanceof Error ? error.message : String(error), 1_000) });
+        await appendNotificationEventNonFatal(store, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "failed", message: redactText(error instanceof Error ? error.message : String(error), 1_000) });
+        return;
+    }
+    if (sink.name !== "noop")
+        await appendNotificationEventNonFatal(store, { type: "notification", goalId: goal.id, runId: event.runId, timestamp: event.timestamp, sink: sink.name, status: "sent", message: event.type });
+}
+async function appendNotificationEventNonFatal(store, event) {
+    try {
+        await appendGoalEvent(store.paths, event);
+    }
+    catch {
+        // Notification event logging is best-effort and must not make notifyNonFatal throw.
     }
 }
 //# sourceMappingURL=notifications.js.map
