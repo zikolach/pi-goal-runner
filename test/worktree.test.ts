@@ -105,6 +105,34 @@ test("ensureGoalWorktree resets recorded paths outside the managed worktrees dir
   }
 });
 
+test("ensureGoalWorktree resets recorded sibling worktree paths", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-sibling`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const siblingWorktreePath = path.join(statePath, "worktrees", "other-goal");
+  const store = createGoalStore(statePath);
+  try {
+    await createRepo(repoPath);
+    const goal = await store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r", localPath: repoPath, worktreePath: siblingWorktreePath }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    const updated = await ensureGoalWorktree(store, goal);
+
+    assert.equal(updated.github?.repository.worktreePath, store.paths.worktreeDir("g"));
+    assert.equal((await store.get("g")).github?.repository.worktreePath, store.paths.worktreeDir("g"));
+    await assert.rejects(() => stat(siblingWorktreePath), /ENOENT/);
+    assert.equal(await readFile(path.join(store.paths.worktreeDir("g"), "file.txt"), "utf8"), "data");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ensureGoalWorktree uses caller timestamp when assigning worktree path", async () => {
   const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-updated-at`);
   const repoPath = path.join(root, "repo");

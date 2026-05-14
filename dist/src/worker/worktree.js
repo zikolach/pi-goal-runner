@@ -9,7 +9,8 @@ export async function ensureGoalWorktree(store, goal, options = {}) {
     if (!goal.github)
         return goal;
     const recordedWorktreePath = goal.github.repository.worktreePath;
-    const worktreePath = recordedWorktreePath && isManagedWorktreePath(store.paths.worktreesDir, recordedWorktreePath) ? recordedWorktreePath : store.paths.worktreeDir(goal.id);
+    const expectedWorktreePath = store.paths.worktreeDir(goal.id);
+    const worktreePath = recordedWorktreePath && isExpectedWorktreePath(expectedWorktreePath, recordedWorktreePath) ? recordedWorktreePath : expectedWorktreePath;
     const branch = goal.github.repository.branch;
     const repoPath = goal.github.repository.localPath ?? goal.cwd;
     if (!repoPath)
@@ -22,9 +23,8 @@ export async function ensureGoalWorktree(store, goal, options = {}) {
         github: current.github ? { ...current.github, repository: { ...current.github.repository, worktreePath } } : current.github,
     }), options.updatedAt ? { updatedAt: options.updatedAt } : undefined);
 }
-function isManagedWorktreePath(worktreesDir, worktreePath) {
-    const relative = path.relative(path.resolve(worktreesDir), path.resolve(worktreePath));
-    return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+function isExpectedWorktreePath(expectedWorktreePath, worktreePath) {
+    return path.resolve(worktreePath) === path.resolve(expectedWorktreePath);
 }
 export async function createOrReuseWorktree(paths, repoPath, worktreePath, branch) {
     await ensureDir(paths.worktreesDir);

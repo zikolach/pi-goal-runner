@@ -13,7 +13,8 @@ const execFileAsync = promisify(execFile);
 export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord, options: { updatedAt?: string } = {}): Promise<GoalRecord> {
   if (!goal.github) return goal;
   const recordedWorktreePath = goal.github.repository.worktreePath;
-  const worktreePath = recordedWorktreePath && isManagedWorktreePath(store.paths.worktreesDir, recordedWorktreePath) ? recordedWorktreePath : store.paths.worktreeDir(goal.id);
+  const expectedWorktreePath = store.paths.worktreeDir(goal.id);
+  const worktreePath = recordedWorktreePath && isExpectedWorktreePath(expectedWorktreePath, recordedWorktreePath) ? recordedWorktreePath : expectedWorktreePath;
   const branch = goal.github.repository.branch;
   const repoPath = goal.github.repository.localPath ?? goal.cwd;
   if (!repoPath) throw new Error("Repository local path or cwd is required to create a worktree");
@@ -29,9 +30,8 @@ export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord, opt
   );
 }
 
-function isManagedWorktreePath(worktreesDir: string, worktreePath: string): boolean {
-  const relative = path.relative(path.resolve(worktreesDir), path.resolve(worktreePath));
-  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+function isExpectedWorktreePath(expectedWorktreePath: string, worktreePath: string): boolean {
+  return path.resolve(worktreePath) === path.resolve(expectedWorktreePath);
 }
 
 export async function createOrReuseWorktree(paths: StatePaths, repoPath: string, worktreePath: string, branch?: string): Promise<void> {
