@@ -30,6 +30,40 @@ test("creates, lists, gets, and updates goals", async () => {
   }
 });
 
+test("list ignores goals with incomplete required fields", async () => {
+  const t = await tempStore();
+  try {
+    const valid = await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe", schedule: defaultSchedule(new Date("2026-01-01T00:00:00Z")) });
+    await writeJsonAtomic(t.store.paths.stateFile("missing-created-at"), {
+      schemaVersion: 1,
+      id: "missing-created-at",
+      type: "github_pr_review",
+      state: "active",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      summary: "incomplete",
+      schedule: defaultSchedule(new Date("2026-01-01T00:00:00Z")),
+      runHistory: [],
+      pendingDecisions: [],
+    });
+    await writeJsonAtomic(t.store.paths.stateFile("invalid-created-at"), {
+      schemaVersion: 1,
+      id: "invalid-created-at",
+      type: "github_pr_review",
+      state: "active",
+      createdAt: 123,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      summary: "incomplete",
+      schedule: defaultSchedule(new Date("2026-01-01T00:00:00Z")),
+      runHistory: [],
+      pendingDecisions: [],
+    });
+
+    assert.deepEqual((await t.store.list()).map((goal) => goal.id), [valid.id]);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("state directories are created with restrictive permissions", async () => {
   const t = await tempStore();
   try {

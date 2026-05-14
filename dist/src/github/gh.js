@@ -44,14 +44,14 @@ export function parsePr(repoOrUrl, prInput) {
     if (prUrlReference && prUrlNumberMatch) {
         const owner = prUrlReference.owner;
         const repo = prUrlReference.repo;
-        const prNumber = Number(prUrlNumberMatch[1]);
+        const prNumber = parsePrNumber(prUrlNumberMatch[1]);
         return { repository: { owner, repo, url: normalizedRepoUrl(owner, repo) }, prNumber, prUrl: `https://github.com/${owner}/${repo}/pull/${prNumber}` };
     }
     const repo = parseRepo(repoOrUrl);
     const numberMatch = trimmedPrInput.match(/^\d+$/);
     if (!numberMatch)
         throw new Error("PR must be a GitHub PR URL or an integer PR number");
-    const prNumber = Number(numberMatch[0]);
+    const prNumber = parsePrNumber(numberMatch[0]);
     return { repository: repo, prNumber, prUrl: `https://github.com/${repo.owner}/${repo.repo}/pull/${prNumber}` };
 }
 export function normalizedRepoUrl(owner, repo) {
@@ -59,5 +59,11 @@ export function normalizedRepoUrl(owner, repo) {
 }
 function stripGitSuffix(repo) {
     return repo.endsWith(".git") ? repo.slice(0, -4) : repo;
+}
+function parsePrNumber(value) {
+    const prNumber = Number(value);
+    if (!Number.isSafeInteger(prNumber) || prNumber < 1)
+        throw new Error("PR number must be a positive safe integer");
+    return prNumber;
 }
 //# sourceMappingURL=gh.js.map

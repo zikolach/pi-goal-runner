@@ -9,6 +9,7 @@ const MAX_ADDRESSED_THREAD_ID_LENGTH = 120;
 const MAX_VALIDATION_RESULTS = 20;
 const MAX_VALIDATION_COMMAND_LENGTH = 500;
 const MAX_VALIDATION_OUTPUT_LENGTH = 2_000;
+const MAX_DECISION_OPTIONS = 20;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -73,7 +74,7 @@ export function normalizeWorkerEvent(goalId: string, runId: string | undefined, 
 }
 
 function normalizeDecisionOptions(options: unknown[]): DecisionRecord["options"] {
-  return options.map((option, index) => {
+  return options.slice(0, MAX_DECISION_OPTIONS).map((option, index) => {
     if (!option || typeof option !== "object") {
       return { id: `option-${index + 1}`, label: "" };
     }

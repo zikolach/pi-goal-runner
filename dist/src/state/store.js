@@ -34,7 +34,9 @@ export function createGoalStore(root) {
                 if (!entry.isDirectory() || entry.name === "worktrees")
                     continue;
                 try {
-                    goals.push(await this.get(entry.name));
+                    const goal = await this.get(entry.name);
+                    if (isListableGoalRecord(goal))
+                        goals.push(goal);
                 }
                 catch {
                     // Ignore corrupt or incomplete goal dirs in list output.
@@ -64,5 +66,20 @@ export function createGoalStore(root) {
 export function createGoalId(prefix = "goal") {
     const random = Math.random().toString(36).slice(2, 8);
     return `${prefix}-${Date.now().toString(36)}-${random}`;
+}
+function isListableGoalRecord(goal) {
+    return (goal.schemaVersion === 1 &&
+        typeof goal.id === "string" &&
+        goal.type === "github_pr_review" &&
+        typeof goal.state === "string" &&
+        typeof goal.createdAt === "string" &&
+        !Number.isNaN(Date.parse(goal.createdAt)) &&
+        typeof goal.updatedAt === "string" &&
+        typeof goal.summary === "string" &&
+        !!goal.schedule &&
+        typeof goal.schedule === "object" &&
+        typeof goal.schedule.nextCheckAt === "string" &&
+        Array.isArray(goal.runHistory) &&
+        Array.isArray(goal.pendingDecisions));
 }
 //# sourceMappingURL=store.js.map

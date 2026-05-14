@@ -63,3 +63,19 @@ test("decision worker events coerce timeoutAt and required to schema-safe types"
   assert.equal(valid.decision.timeoutAt, "2026-01-01T00:00:00Z");
   assert.equal(valid.decision.required, false);
 });
+
+test("decision worker events cap untrusted options", () => {
+  const event = normalizeWorkerEvent("g", "r", {
+    type: "decision",
+    decision: {
+      id: "d",
+      prompt: "Choose",
+      options: Array.from({ length: 30 }, (_unused, index) => ({ id: `option-${index}`, label: `Option ${index}` })),
+    },
+  });
+
+  assert.equal(event.type, "decision");
+  if (event.type !== "decision") return;
+  assert.equal(event.decision.options.length, 20);
+  assert.equal(event.decision.options.at(-1)?.id, "option-19");
+});

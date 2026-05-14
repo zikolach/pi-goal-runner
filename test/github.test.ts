@@ -26,6 +26,9 @@ test("parses repositories and PRs", () => {
   assert.equal(parsePr("ignored/repo", "https://github.com/owner/my.repo/pull/5").repository.repo, "my.repo");
   assert.equal(parsePr("ignored/repo", "https://github.com/zikolach/pi-goal-runner/pull/5").prNumber, 5);
   assert.equal(parsePr("zikolach/pi-goal-runner", " 123 ").prNumber, 123);
+  assert.throws(() => parsePr("zikolach/pi-goal-runner", "0"), /positive safe integer/);
+  assert.throws(() => parsePr("zikolach/pi-goal-runner", "9007199254740992"), /positive safe integer/);
+  assert.throws(() => parsePr("ignored/repo", "https://github.com/owner/repo/pull/0"), /positive safe integer/);
   assert.throws(() => parseRepo("https://evilgithub.com/owner/repo"), /owner\/repo or a GitHub URL/);
   assert.throws(() => parseRepo("https://github.com.evil.com/owner/repo"), /owner\/repo or a GitHub URL/);
   assert.throws(() => parseRepo("https://api.github.com/owner/repo"), /owner\/repo or a GitHub URL/);
