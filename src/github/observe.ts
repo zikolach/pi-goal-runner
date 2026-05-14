@@ -2,6 +2,20 @@ import type { ActionableObservation, CheckObservation, GithubObservation, Github
 import { redactText } from "../redaction.js";
 import type { GhExecutor } from "./gh.js";
 
+interface GraphqlPageInfo {
+  hasNextPage?: boolean;
+  endCursor?: string | null;
+}
+
+interface ReviewThreadNode {
+  id?: unknown;
+  isResolved?: unknown;
+  isOutdated?: unknown;
+  path?: unknown;
+  line?: unknown;
+  comments?: { pageInfo?: GraphqlPageInfo; nodes?: unknown[] };
+}
+
 export async function observeGithubPr(gh: GhExecutor, config: GithubPrGoalConfig): Promise<GithubObservation> {
   const repo = `${config.repository.owner}/${config.repository.repo}`;
   const prJson = await gh.run([
@@ -25,21 +39,68 @@ export async function observeGithubPr(gh: GhExecutor, config: GithubPrGoalConfig
   };
 }
 
-async function fetchReviewThreads(gh: GhExecutor, config: GithubPrGoalConfig): Promise<unknown> {
-  const response = await gh.run([
-    "api",
-    "graphql",
-    "-f",
-    `owner=${config.repository.owner}`,
-    "-f",
-    `name=${config.repository.repo}`,
-    "-F",
-    `number=${config.prNumber}`,
-    "-f",
-    "query=query($owner:String!, $name:String!, $number:Int!) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) { nodes { id body author { login } url updatedAt } } } } } } }",
-  ]);
+async function fetchReviewThreads(gh: GhExecutor, config: GithubPrGoalConfig): Promise<unknown[]> {
+  const threads: ReviewThreadNode[] = [];
+  let cursor: string | undefined;
+  do {
+    const response = await gh.run([
+      "api",
+      "graphql",
+      "-f",
+      `owner=${config.repository.owner}`,
+      "-f",
+      `name=${config.repository.repo}`,
+      "-F",
+      `number=${config.prNumber}`,
+      ...(cursor ? ["-f", `threadsCursor=${cursor}`] : []),
+      "-f",
+      "query=query($owner:String!, $name:String!, $number:Int!, $threadsCursor:String) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100, after:$threadsCursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first:100) { pageInfo { hasNextPage endCursor } nodes { id body author { login } url updatedAt } } } } } } }",
+    ]);
+    const page = extractReviewThreadsPage(response);
+    threads.push(...page.nodes);
+    cursor = page.pageInfo.hasNextPage && page.pageInfo.endCursor ? page.pageInfo.endCursor : undefined;
+  } while (cursor);
+
+  for (const thread of threads) {
+    await fetchRemainingThreadComments(gh, thread);
+  }
+  return threads;
+}
+
+function extractReviewThreadsPage(response: string): { pageInfo: GraphqlPageInfo; nodes: ReviewThreadNode[] } {
   const parsed = JSON.parse(response) as Record<string, unknown>;
-  return (((parsed.data as Record<string, unknown> | undefined)?.repository as Record<string, unknown> | undefined)?.pullRequest as Record<string, unknown> | undefined)?.reviewThreads;
+  const reviewThreads = (((parsed.data as Record<string, unknown> | undefined)?.repository as Record<string, unknown> | undefined)?.pullRequest as Record<string, unknown> | undefined)?.reviewThreads as
+    | { pageInfo?: GraphqlPageInfo; nodes?: ReviewThreadNode[] }
+    | undefined;
+  return { pageInfo: reviewThreads?.pageInfo ?? {}, nodes: Array.isArray(reviewThreads?.nodes) ? reviewThreads.nodes : [] };
+}
+
+async function fetchRemainingThreadComments(gh: GhExecutor, thread: ReviewThreadNode): Promise<void> {
+  const comments = thread.comments;
+  let cursor = comments?.pageInfo?.hasNextPage && comments.pageInfo.endCursor ? comments.pageInfo.endCursor : undefined;
+  if (!cursor || typeof thread.id !== "string") return;
+  const nodes = Array.isArray(comments?.nodes) ? [...comments.nodes] : [];
+  while (cursor) {
+    const response = await gh.run([
+      "api",
+      "graphql",
+      "-f",
+      `threadId=${thread.id}`,
+      ...(cursor ? ["-f", `commentsCursor=${cursor}`] : []),
+      "-f",
+      "query=query($threadId:ID!, $commentsCursor:String) { node(id:$threadId) { ... on PullRequestReviewThread { comments(first:100, after:$commentsCursor) { pageInfo { hasNextPage endCursor } nodes { id body author { login } url updatedAt } } } } }",
+    ]);
+    const page = extractCommentsPage(response);
+    nodes.push(...page.nodes);
+    cursor = page.pageInfo.hasNextPage && page.pageInfo.endCursor ? page.pageInfo.endCursor : undefined;
+  }
+  thread.comments = { ...comments, pageInfo: { hasNextPage: false, endCursor: null }, nodes };
+}
+
+function extractCommentsPage(response: string): { pageInfo: GraphqlPageInfo; nodes: unknown[] } {
+  const parsed = JSON.parse(response) as Record<string, unknown>;
+  const comments = ((parsed.data as Record<string, unknown> | undefined)?.node as Record<string, unknown> | undefined)?.comments as { pageInfo?: GraphqlPageInfo; nodes?: unknown[] } | undefined;
+  return { pageInfo: comments?.pageInfo ?? {}, nodes: Array.isArray(comments?.nodes) ? comments.nodes : [] };
 }
 
 export function findActionable(config: GithubPrGoalConfig, observation: GithubObservation): ActionableObservation {

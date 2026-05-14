@@ -6,6 +6,10 @@ import { increaseBackoff, nextCheckAt } from "../policy.js";
 import { splitArgs } from "../args.js";
 export const MAX_WORKER_STDOUT_BUFFER_CHARS = 64 * 1024;
 export async function launchWorker(store, goal, prompt, options = {}) {
+    const run = await startWorker(store, goal, prompt, options);
+    return run.done;
+}
+export async function startWorker(store, goal, prompt, options = {}) {
     const runId = `run-${Date.now().toString(36)}`;
     const run = { id: runId, startedAt: new Date().toISOString(), status: "running" };
     await store.update(goal.id, (current) => ({ ...current, state: "running", runHistory: [...current.runHistory, run] }));
@@ -13,7 +17,7 @@ export async function launchWorker(store, goal, prompt, options = {}) {
     const args = options.args ?? workerArgsFromEnv();
     const cwd = options.cwd ?? goal.github?.repository.worktreePath ?? goal.cwd ?? process.cwd();
     const timeoutMs = options.timeoutMs ?? 45 * 60_000;
-    return new Promise((resolve) => {
+    const done = new Promise((resolve) => {
         const childEnv = { ...process.env, ...options.env };
         delete childEnv.PI_GOAL_PROMPT;
         const child = spawn(command, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
@@ -154,6 +158,7 @@ export async function launchWorker(store, goal, prompt, options = {}) {
             });
         });
     });
+    return { runId, done };
 }
 export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatus) {
     await appendGoalEvent(store.paths, event);

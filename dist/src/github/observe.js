@@ -22,20 +22,62 @@ export async function observeGithubPr(gh, config) {
     };
 }
 async function fetchReviewThreads(gh, config) {
-    const response = await gh.run([
-        "api",
-        "graphql",
-        "-f",
-        `owner=${config.repository.owner}`,
-        "-f",
-        `name=${config.repository.repo}`,
-        "-F",
-        `number=${config.prNumber}`,
-        "-f",
-        "query=query($owner:String!, $name:String!, $number:Int!) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100) { nodes { id isResolved isOutdated path line comments(first:20) { nodes { id body author { login } url updatedAt } } } } } } }",
-    ]);
+    const threads = [];
+    let cursor;
+    do {
+        const response = await gh.run([
+            "api",
+            "graphql",
+            "-f",
+            `owner=${config.repository.owner}`,
+            "-f",
+            `name=${config.repository.repo}`,
+            "-F",
+            `number=${config.prNumber}`,
+            ...(cursor ? ["-f", `threadsCursor=${cursor}`] : []),
+            "-f",
+            "query=query($owner:String!, $name:String!, $number:Int!, $threadsCursor:String) { repository(owner:$owner, name:$name) { pullRequest(number:$number) { reviewThreads(first:100, after:$threadsCursor) { pageInfo { hasNextPage endCursor } nodes { id isResolved isOutdated path line comments(first:100) { pageInfo { hasNextPage endCursor } nodes { id body author { login } url updatedAt } } } } } } }",
+        ]);
+        const page = extractReviewThreadsPage(response);
+        threads.push(...page.nodes);
+        cursor = page.pageInfo.hasNextPage && page.pageInfo.endCursor ? page.pageInfo.endCursor : undefined;
+    } while (cursor);
+    for (const thread of threads) {
+        await fetchRemainingThreadComments(gh, thread);
+    }
+    return threads;
+}
+function extractReviewThreadsPage(response) {
     const parsed = JSON.parse(response);
-    return parsed.data?.repository?.pullRequest?.reviewThreads;
+    const reviewThreads = parsed.data?.repository?.pullRequest?.reviewThreads;
+    return { pageInfo: reviewThreads?.pageInfo ?? {}, nodes: Array.isArray(reviewThreads?.nodes) ? reviewThreads.nodes : [] };
+}
+async function fetchRemainingThreadComments(gh, thread) {
+    const comments = thread.comments;
+    let cursor = comments?.pageInfo?.hasNextPage && comments.pageInfo.endCursor ? comments.pageInfo.endCursor : undefined;
+    if (!cursor || typeof thread.id !== "string")
+        return;
+    const nodes = Array.isArray(comments?.nodes) ? [...comments.nodes] : [];
+    while (cursor) {
+        const response = await gh.run([
+            "api",
+            "graphql",
+            "-f",
+            `threadId=${thread.id}`,
+            ...(cursor ? ["-f", `commentsCursor=${cursor}`] : []),
+            "-f",
+            "query=query($threadId:ID!, $commentsCursor:String) { node(id:$threadId) { ... on PullRequestReviewThread { comments(first:100, after:$commentsCursor) { pageInfo { hasNextPage endCursor } nodes { id body author { login } url updatedAt } } } } }",
+        ]);
+        const page = extractCommentsPage(response);
+        nodes.push(...page.nodes);
+        cursor = page.pageInfo.hasNextPage && page.pageInfo.endCursor ? page.pageInfo.endCursor : undefined;
+    }
+    thread.comments = { ...comments, pageInfo: { hasNextPage: false, endCursor: null }, nodes };
+}
+function extractCommentsPage(response) {
+    const parsed = JSON.parse(response);
+    const comments = parsed.data?.node?.comments;
+    return { pageInfo: comments?.pageInfo ?? {}, nodes: Array.isArray(comments?.nodes) ? comments.nodes : [] };
 }
 export function findActionable(config, observation) {
     const lastHandled = config.lastHandledAt ? new Date(config.lastHandledAt).getTime() : 0;

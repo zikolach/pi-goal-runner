@@ -6,7 +6,7 @@ import { findActionable, observeGithubPr } from "./github/observe.js";
 import { replyAndResolveAddressedThreads } from "./github/update.js";
 import { buildWorkerPrompt } from "./worker/prompt.js";
 import { ensureGoalWorktree } from "./worker/worktree.js";
-import { launchWorker } from "./worker/subprocess.js";
+import { startWorker } from "./worker/subprocess.js";
 import { createDefaultNotificationSink, notifyNonFatal } from "./notifications.js";
 import { safeError } from "./redaction.js";
 export async function selectDueGoals(store, now = new Date()) {
@@ -16,6 +16,8 @@ export async function selectDueGoals(store, now = new Date()) {
 export function skipReason(goal, now = new Date()) {
     if (isTerminal(goal.state))
         return `terminal state ${goal.state}`;
+    if (goal.state === "running")
+        return "already running";
     if (goal.state === "paused")
         return "paused";
     if (goal.state === "needs_decision")
@@ -46,10 +48,15 @@ export async function schedulerTick(store, options = {}) {
             result.messages.push(`${goal.id}: already running`);
             continue;
         }
+        let releaseLock = true;
         try {
-            const launched = await checkGoal(store, goal, gh, sink, options);
-            if (launched)
+            const outcome = await checkGoal(store, goal, gh, sink, options);
+            if (outcome.launched)
                 result.launched++;
+            if (outcome.workerDone) {
+                releaseLock = false;
+                releaseLockAfterWorker(outcome.workerDone, lock.release);
+            }
         }
         catch (error) {
             result.failures++;
@@ -62,10 +69,21 @@ export async function schedulerTick(store, options = {}) {
             result.messages.push(`${goal.id}: ${message}`);
         }
         finally {
-            await lock.release();
+            if (releaseLock)
+                await lock.release();
         }
     }
     return result;
+}
+function releaseLockAfterWorker(workerDone, release) {
+    void (async () => {
+        try {
+            await workerDone;
+        }
+        finally {
+            await release();
+        }
+    })().catch(() => undefined);
 }
 async function checkGoal(store, goal, gh, sink, options) {
     const now = options.now ?? new Date();
@@ -82,7 +100,7 @@ async function checkGoal(store, goal, gh, sink, options) {
             await appendGoalEvent(store.paths, event);
             await notifyNonFatal(store, sink, updated, event);
         }
-        return false;
+        return { launched: false };
     }
     const actionableGoal = await store.update(goal.id, (current) => applyActionablePolicy(current, now));
     const worktreeGoal = await ensureGoalWorktree(store, actionableGoal);
@@ -91,12 +109,12 @@ async function checkGoal(store, goal, gh, sink, options) {
     await appendGoalEvent(store.paths, event);
     await notifyNonFatal(store, sink, worktreeGoal, event);
     if (options.worker?.dryRun)
-        return true;
-    await launchWorker(store, worktreeGoal, prompt, {
+        return { launched: true };
+    const workerRun = await startWorker(store, worktreeGoal, prompt, {
         ...options.worker,
         onComplete: async (completeEvent) => handleSuccessfulWorkerComplete(store, gh, worktreeGoal, completeEvent, actionable.checks.map((check) => check.name)),
     });
-    return true;
+    return { launched: true, workerDone: workerRun.done };
 }
 export async function handleSuccessfulWorkerComplete(store, gh, goal, event, handledCheckNames = []) {
     if (!goal.github)

@@ -16,9 +16,19 @@ export interface WorkerLaunchOptions {
   onComplete?: (event: CompleteEvent) => Promise<void>;
 }
 
+export interface StartedWorkerRun {
+  runId: string;
+  done: Promise<GoalRecord>;
+}
+
 export const MAX_WORKER_STDOUT_BUFFER_CHARS = 64 * 1024;
 
 export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: string, options: WorkerLaunchOptions = {}): Promise<GoalRecord> {
+  const run = await startWorker(store, goal, prompt, options);
+  return run.done;
+}
+
+export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: string, options: WorkerLaunchOptions = {}): Promise<StartedWorkerRun> {
   const runId = `run-${Date.now().toString(36)}`;
   const run: RunSummary = { id: runId, startedAt: new Date().toISOString(), status: "running" };
   await store.update(goal.id, (current) => ({ ...current, state: "running", runHistory: [...current.runHistory, run] }));
@@ -26,7 +36,7 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
   const args = options.args ?? workerArgsFromEnv();
   const cwd = options.cwd ?? goal.github?.repository.worktreePath ?? goal.cwd ?? process.cwd();
   const timeoutMs = options.timeoutMs ?? 45 * 60_000;
-  return new Promise((resolve) => {
+  const done = new Promise<GoalRecord>((resolve) => {
     const childEnv = { ...process.env, ...options.env };
     delete childEnv.PI_GOAL_PROMPT;
     const child = spawn(command, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"] });
@@ -153,6 +163,7 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
       });
     });
   });
+  return { runId, done };
 }
 
 export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId: string, event: GoalEvent, forcedStatus?: RunSummary["status"]): Promise<void> {

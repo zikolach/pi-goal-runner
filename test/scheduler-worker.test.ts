@@ -82,6 +82,39 @@ test("scheduler catch block applies retry backoff with injected time", async () 
   }
 });
 
+test("scheduler launches workers in background and continues checking due goals", async () => {
+  const t = await tempStore();
+  try {
+    const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
+    const github = { repository: { owner: "o", repo: "r", localPath: process.cwd(), worktreePath: process.cwd() }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] };
+    await t.store.create({ id: "g1", type: "github_pr_review", state: "active", summary: "g1", schedule, cwd: process.cwd(), github });
+    await t.store.create({ id: "g2", type: "github_pr_review", state: "active", summary: "g2", schedule, cwd: process.cwd(), github });
+    const gh = {
+      run: async (args: string[]) =>
+        args[0] === "api"
+          ? JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [{ id: "t1", isResolved: false, isOutdated: false, comments: { nodes: [{ id: "c1", body: "fix", updatedAt: "2026-01-01T00:00:00Z" }] } }] } } } } })
+          : JSON.stringify({ url: "u", statusCheckRollup: [] }),
+    };
+    const result = await schedulerTick(t.store, {
+      gh,
+      now: new Date("2026-01-01T00:00:00Z"),
+      worker: {
+        command: process.execPath,
+        args: ["-e", "setTimeout(() => console.log(JSON.stringify({type:'complete', status:'success', summary:'done'})), 1500);"],
+        timeoutMs: 5_000,
+      },
+    });
+    assert.equal(result.launched, 2);
+    assert.equal((await t.store.get("g1")).state, "running");
+    assert.equal((await t.store.get("g2")).state, "running");
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    assert.equal((await t.store.get("g1")).lastRunSummary, "done");
+    assert.equal((await t.store.get("g2")).lastRunSummary, "done");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("worker event ingestion records decisions, completion, failures", async () => {
   const t = await tempStore();
   try {

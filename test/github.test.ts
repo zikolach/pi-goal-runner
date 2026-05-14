@@ -86,6 +86,28 @@ test("observes review threads through GraphQL", async () => {
   assert.equal(findActionable(config, observation).actionable, true);
 });
 
+test("observes all review thread and comment pages", async () => {
+  const apiCalls: string[][] = [];
+  const gh: GhExecutor = {
+    run: async (args) => {
+      if (args[0] !== "api") return JSON.stringify({ url: "u", headRefName: "b", headRefOid: "sha", statusCheckRollup: [] });
+      apiCalls.push(args);
+      const query = args.join(" ");
+      if (query.includes("node(id:$threadId)")) {
+        return JSON.stringify({ data: { node: { comments: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ id: "c2", body: "second comment", author: { login: "bot" }, updatedAt: "2026-01-01T00:01:00Z" }] } } } });
+      }
+      if (query.includes("threadsCursor=thread-page-1")) {
+        return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ id: "t2", isResolved: false, isOutdated: false, comments: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [{ id: "c3", body: "other thread", author: { login: "bot" }, updatedAt: "2026-01-01T00:02:00Z" }] } }] } } } } });
+      }
+      return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: true, endCursor: "thread-page-1" }, nodes: [{ id: "t1", isResolved: false, isOutdated: false, comments: { pageInfo: { hasNextPage: true, endCursor: "comment-page-1" }, nodes: [{ id: "c1", body: "first comment", author: { login: "bot" }, updatedAt: "2026-01-01T00:00:00Z" }] } }] } } } } });
+    },
+  };
+  const observation = await observeGithubPr(gh, config);
+  assert.deepEqual(observation.reviewThreads.map((thread) => thread.id), ["t1", "t2"]);
+  assert.deepEqual(observation.reviewThreads[0].comments.map((comment) => comment.id), ["c1", "c2"]);
+  assert.equal(apiCalls.length, 3);
+});
+
 test("auto reply requires valid commit sha evidence", async () => {
   const calls: string[][] = [];
   const gh: GhExecutor = { run: async (args) => { calls.push(args); return "{}"; } };

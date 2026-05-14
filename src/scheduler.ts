@@ -8,7 +8,7 @@ import { findActionable, observeGithubPr } from "./github/observe.js";
 import { replyAndResolveAddressedThreads } from "./github/update.js";
 import { buildWorkerPrompt } from "./worker/prompt.js";
 import { ensureGoalWorktree } from "./worker/worktree.js";
-import { launchWorker, type WorkerLaunchOptions } from "./worker/subprocess.js";
+import { startWorker, type WorkerLaunchOptions } from "./worker/subprocess.js";
 import { createDefaultNotificationSink, notifyNonFatal, type NotificationSink } from "./notifications.js";
 import { safeError } from "./redaction.js";
 
@@ -26,6 +26,7 @@ export async function selectDueGoals(store: GoalStore, now = new Date()): Promis
 
 export function skipReason(goal: GoalRecord, now = new Date()): string | undefined {
   if (isTerminal(goal.state)) return `terminal state ${goal.state}`;
+  if (goal.state === "running") return "already running";
   if (goal.state === "paused") return "paused";
   if (goal.state === "needs_decision") return "waiting for user decision";
   if (goal.pendingDecisions.some((decision) => decision.status === "pending")) return "waiting for user decision";
@@ -53,9 +54,14 @@ export async function schedulerTick(store: GoalStore, options: SchedulerOptions 
       result.messages.push(`${goal.id}: already running`);
       continue;
     }
+    let releaseLock = true;
     try {
-      const launched = await checkGoal(store, goal, gh, sink, options);
-      if (launched) result.launched++;
+      const outcome = await checkGoal(store, goal, gh, sink, options);
+      if (outcome.launched) result.launched++;
+      if (outcome.workerDone) {
+        releaseLock = false;
+        releaseLockAfterWorker(outcome.workerDone, lock.release);
+      }
     } catch (error) {
       result.failures++;
       const message = safeError(error);
@@ -66,13 +72,28 @@ export async function schedulerTick(store: GoalStore, options: SchedulerOptions 
       });
       result.messages.push(`${goal.id}: ${message}`);
     } finally {
-      await lock.release();
+      if (releaseLock) await lock.release();
     }
   }
   return result;
 }
 
-async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sink: NotificationSink, options: SchedulerOptions): Promise<boolean> {
+interface CheckGoalResult {
+  launched: boolean;
+  workerDone?: Promise<GoalRecord>;
+}
+
+function releaseLockAfterWorker(workerDone: Promise<GoalRecord>, release: () => Promise<void>): void {
+  void (async () => {
+    try {
+      await workerDone;
+    } finally {
+      await release();
+    }
+  })().catch(() => undefined);
+}
+
+async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sink: NotificationSink, options: SchedulerOptions): Promise<CheckGoalResult> {
   const now = options.now ?? new Date();
   if (goal.type !== "github_pr_review" || !goal.github) throw new Error(`Unsupported goal type: ${goal.type}`);
   const observation: GithubObservation = await observeGithubPr(gh, goal.github);
@@ -86,7 +107,7 @@ async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sin
       await appendGoalEvent(store.paths, event);
       await notifyNonFatal(store, sink, updated, event);
     }
-    return false;
+    return { launched: false };
   }
   const actionableGoal = await store.update(goal.id, (current) => applyActionablePolicy(current, now));
   const worktreeGoal = await ensureGoalWorktree(store, actionableGoal);
@@ -94,12 +115,12 @@ async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sin
   const event = { type: "progress" as const, goalId: goal.id, timestamp: now.toISOString(), message: `Launching worker: ${actionable.reason}` };
   await appendGoalEvent(store.paths, event);
   await notifyNonFatal(store, sink, worktreeGoal, event);
-  if (options.worker?.dryRun) return true;
-  await launchWorker(store, worktreeGoal, prompt, {
+  if (options.worker?.dryRun) return { launched: true };
+  const workerRun = await startWorker(store, worktreeGoal, prompt, {
     ...options.worker,
     onComplete: async (completeEvent) => handleSuccessfulWorkerComplete(store, gh, worktreeGoal, completeEvent, actionable.checks.map((check) => check.name)),
   });
-  return true;
+  return { launched: true, workerDone: workerRun.done };
 }
 
 export async function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExecutor, goal: GoalRecord, event: CompleteEvent, handledCheckNames: string[] = []): Promise<void> {
