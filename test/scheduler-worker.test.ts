@@ -58,6 +58,30 @@ test("scheduler uses injected time for quiet policy updates", async () => {
   }
 });
 
+test("scheduler catch block applies retry backoff with injected time", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(new Date("2026-01-01T00:00:00Z")),
+      cwd: process.cwd(),
+      github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+    const gh = { run: async () => { throw new Error("scheduler boom"); } };
+    const result = await schedulerTick(t.store, { gh, now: new Date("2026-01-01T00:00:00Z"), worker: { dryRun: true } });
+    const updated = await t.store.get("g");
+    assert.equal(result.failures, 1);
+    assert.equal(updated.state, "failed");
+    assert.equal(updated.schedule.backoff.currentMs, 120_000);
+    assert.equal(updated.schedule.nextCheckAt, "2026-01-01T00:02:00.000Z");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("worker event ingestion records decisions, completion, failures", async () => {
   const t = await tempStore();
   try {
@@ -307,9 +331,12 @@ test("successful worker completion auto replies and resolves when enabled", asyn
     });
     const calls: string[][] = [];
     const gh = { run: async (args: string[]) => { calls.push(args); return "{}"; } };
-    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc1234", addressedThreadIds: ["t1"] });
+    const completedAt = "2026-01-01T00:00:00.000Z";
+    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: completedAt, status: "success", summary: "done", commitSha: "abc1234", addressedThreadIds: ["t1"] });
     assert.equal(calls.some((args) => args.join(" ").includes("addPullRequestReviewThreadReply")), true);
     assert.equal(calls.some((args) => args.join(" ").includes("resolveReviewThread")), true);
+    const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
+    assert.match(events, new RegExp(`"timestamp":"${completedAt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
   } finally {
     await t.cleanup();
   }
@@ -327,9 +354,11 @@ test("auto reply and resolve failures are nonfatal events", async () => {
       github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: true, handledThreadIds: [], handledCheckNames: [] },
     });
     const gh = { run: async () => { throw new Error("boom"); } };
-    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc1234", addressedThreadIds: ["t1"] });
+    const completedAt = "2026-01-01T00:00:00.000Z";
+    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: completedAt, status: "success", summary: "done", commitSha: "abc1234", addressedThreadIds: ["t1"] });
     const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
     assert.match(events, /Auto-reply\/resolve failed/);
+    assert.match(events, new RegExp(`"timestamp":"${completedAt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
     assert.equal((await t.store.get("g")).state, "active");
   } finally {
     await t.cleanup();

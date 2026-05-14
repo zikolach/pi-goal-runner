@@ -2,7 +2,7 @@ import type { ActionableObservation, CompleteEvent, GithubObservation, GoalRecor
 import type { GoalStore } from "./state/store.js";
 import { appendGoalEvent } from "./state/events.js";
 import { acquireGoalLock } from "./state/lock.js";
-import { applyActionablePolicy, applyNoActionPolicy, isDue, isTerminal, nextCheckAt } from "./policy.js";
+import { applyActionablePolicy, applyNoActionPolicy, increaseBackoff, isDue, isTerminal, nextCheckAt } from "./policy.js";
 import { createGhExecutor, type GhExecutor } from "./github/gh.js";
 import { findActionable, observeGithubPr } from "./github/observe.js";
 import { replyAndResolveAddressedThreads } from "./github/update.js";
@@ -60,7 +60,10 @@ export async function schedulerTick(store: GoalStore, options: SchedulerOptions 
       result.failures++;
       const message = safeError(error);
       await appendGoalEvent(store.paths, { type: "failure", goalId: goal.id, timestamp: now.toISOString(), message, retryable: true });
-      await store.update(goal.id, (current) => ({ ...current, state: "failed", latestProgress: message, schedule: { ...current.schedule, nextCheckAt: nextCheckAt(current.schedule.backoff, now) } }));
+      await store.update(goal.id, (current) => {
+        const backoff = increaseBackoff(current.schedule.backoff);
+        return { ...current, state: "failed", latestProgress: message, schedule: { ...current.schedule, backoff, nextCheckAt: nextCheckAt(backoff, now) } };
+      });
       result.messages.push(`${goal.id}: ${message}`);
     } finally {
       await lock.release();
@@ -115,7 +118,7 @@ export async function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExe
         type: "diagnostic",
         goalId: goal.id,
         runId: event.runId,
-        timestamp: new Date().toISOString(),
+        timestamp: event.timestamp,
         message: `Auto-replied and resolved ${resolvedThreadIds.length} GitHub review thread(s)`,
       });
     }
@@ -124,7 +127,7 @@ export async function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExe
       type: "failure",
       goalId: goal.id,
       runId: event.runId,
-      timestamp: new Date().toISOString(),
+      timestamp: event.timestamp,
       message: `Auto-reply/resolve failed: ${safeError(error)}`,
       retryable: true,
     });
