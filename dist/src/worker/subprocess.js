@@ -185,7 +185,7 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
             if (run.id !== runId)
                 return run;
             if (event.type === "complete")
-                return { ...run, completedAt: event.timestamp, status: "success", summary: event.summary, commitSha: event.commitSha, validationResults: event.validationResults };
+                return { ...run, completedAt: event.timestamp, status: event.status === "stale" ? "failed" : "success", summary: event.summary, commitSha: event.commitSha, validationResults: event.validationResults };
             if (event.type === "failure")
                 return { ...run, completedAt: event.timestamp, status: forcedStatus ?? "failed", summary: event.message };
             if (event.type === "decision")
@@ -196,8 +196,14 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
             return { ...goal, latestProgress: event.message, runHistory };
         if (event.type === "decision")
             return { ...addPendingDecision({ ...goal, runHistory }, event.decision), latestProgress: event.decision.prompt };
-        if (event.type === "complete")
+        if (event.type === "complete") {
+            if (event.status === "stale") {
+                const backoff = increaseBackoff(goal.schedule.backoff);
+                const staleAt = new Date(event.timestamp);
+                return { ...goal, state: "failed", latestProgress: event.summary, lastRunSummary: event.summary, runHistory, schedule: { ...goal.schedule, backoff, nextCheckAt: nextCheckAt(backoff, staleAt) }, github: updateGithubHandledState(goal, event) };
+            }
             return { ...goal, state: event.status === "quiet" ? "completed" : "active", latestProgress: event.summary, lastRunSummary: event.summary, runHistory, github: updateGithubHandledState(goal, event) };
+        }
         if (event.type === "failure") {
             const backoff = increaseBackoff(goal.schedule.backoff);
             const failedAt = new Date(event.timestamp);

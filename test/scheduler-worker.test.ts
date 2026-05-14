@@ -268,6 +268,22 @@ test("worker failure events apply retry backoff", async () => {
   }
 });
 
+test("stale worker completions apply retry backoff", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(new Date("2026-01-01T00:00:00Z")), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "stale", summary: "Observation was stale" });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "failed");
+    assert.equal(updated.runHistory.at(-1)?.status, "failed");
+    assert.equal(updated.schedule.backoff.currentMs, 120_000);
+    assert.equal(updated.schedule.nextCheckAt, "2026-01-01T00:02:00.000Z");
+    assert.equal(updated.lastRunSummary, "Observation was stale");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("worker success completion invokes completion callback", async () => {
   const t = await tempStore();
   try {
