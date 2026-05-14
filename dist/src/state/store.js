@@ -51,7 +51,7 @@ export function createGoalStore(root) {
         async update(goalId, updater) {
             const current = await this.get(goalId);
             const next = await updater({ ...current, pendingDecisions: [...current.pendingDecisions], runHistory: [...current.runHistory] });
-            const stamped = { ...next, updatedAt: new Date().toISOString() };
+            const stamped = { ...next, updatedAt: next.updatedAt !== current.updatedAt ? next.updatedAt : new Date().toISOString() };
             await writeJsonAtomic(paths.stateFile(goalId), stamped);
             return stamped;
         },

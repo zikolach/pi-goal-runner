@@ -71,6 +71,19 @@ test("goal ids reject traversal segments", () => {
   assert.throws(() => sanitizeGoalId(".."), /Invalid goal id/);
   assert.throws(() => sanitizeGoalId("goal..1"), /Invalid goal id/);
   assert.throws(() => sanitizeGoalId("/absolute"), /Invalid goal id/);
+  assert.throws(() => sanitizeGoalId("worktrees"), /Invalid goal id/);
+  assert.throws(() => sanitizeGoalId("Worktrees"), /Invalid goal id/);
+});
+
+test("goal updates preserve explicit updatedAt from updater", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe", schedule: defaultSchedule(), updatedAt: "2026-01-01T00:00:00.000Z" });
+    await t.store.update("goal-1", (goal) => ({ ...goal, summary: "changed", updatedAt: "2026-02-01T00:00:00.000Z" }));
+    assert.equal((await t.store.get("goal-1")).updatedAt, "2026-02-01T00:00:00.000Z");
+  } finally {
+    await t.cleanup();
+  }
 });
 
 test("redaction does not leak regex offsets for token patterns", () => {

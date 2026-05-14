@@ -21,16 +21,25 @@ export async function ensureGoalWorktree(store, goal) {
 }
 export async function createOrReuseWorktree(paths, repoPath, worktreePath, branch) {
     await mkdir(paths.worktreesDir, { recursive: true });
+    let reusableWorktree = false;
     try {
-        const { stdout } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "--is-inside-work-tree"]);
-        if (stdout.trim() !== "true")
-            throw new Error(`Path is not a git worktree: ${worktreePath}`);
-        if (branch)
-            await execFileAsync("git", ["-C", worktreePath, "fetch", "--all", "--prune"]);
-        return;
+        const { stdout } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "--is-inside-work-tree"], { maxBuffer: 10 * 1024 * 1024 });
+        reusableWorktree = stdout.trim() === "true";
     }
     catch {
-        // Create below.
+        reusableWorktree = false;
+    }
+    if (reusableWorktree) {
+        if (branch) {
+            try {
+                await execFileAsync("git", ["-C", worktreePath, "fetch", "--all", "--prune"], { maxBuffer: 10 * 1024 * 1024 });
+            }
+            catch (error) {
+                const err = error;
+                throw new Error(`Could not update existing worktree: ${redactText(err.stderr || err.stdout || err.message, 1_000)}`);
+            }
+        }
+        return;
     }
     await prepareWorktreePath(worktreePath);
     const args = ["-C", repoPath, "worktree", "add", worktreePath];

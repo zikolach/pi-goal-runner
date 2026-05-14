@@ -56,3 +56,18 @@ test("worktree branch argument is separated from git options", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("worktree reuse surfaces fetch failures without falling through to creation", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-fetch`);
+  const repoPath = path.join(root, "repo");
+  const worktreePath = path.join(root, "state", "worktrees", "wt");
+  try {
+    await createRepo(repoPath);
+    await execFileAsync("git", ["-C", repoPath, "worktree", "add", worktreePath]);
+    await execFileAsync("git", ["-C", worktreePath, "remote", "add", "broken", path.join(root, "missing-remote.git")]);
+
+    await assert.rejects(() => createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "main"), /Could not update existing worktree/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -1,6 +1,8 @@
 import { homedir } from "node:os";
 import path from "node:path";
 
+const RESERVED_GOAL_IDS = new Set(["worktrees"]);
+
 export interface StatePaths {
   root: string;
   goalsDir: string;
@@ -38,6 +40,7 @@ export function sanitizeGoalId(goalId: string): string {
     goalId.includes("..") ||
     path.isAbsolute(goalId) ||
     path.basename(goalId) !== goalId ||
+    RESERVED_GOAL_IDS.has(goalId.toLowerCase()) ||
     !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(goalId)
   ) {
     throw new Error(`Invalid goal id: ${goalId}`);

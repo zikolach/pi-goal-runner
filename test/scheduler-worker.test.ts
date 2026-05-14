@@ -50,7 +50,9 @@ test("scheduler uses injected time for quiet policy updates", async () => {
     await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule, cwd: process.cwd(), github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] } });
     const gh = { run: async (args: string[]) => args[0] === "api" ? JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } }) : JSON.stringify({ statusCheckRollup: [] }) };
     await schedulerTick(t.store, { gh, now: new Date("2026-01-01T01:00:00Z"), worker: { dryRun: true } });
-    assert.equal((await t.store.get("g")).schedule.nextCheckAt, "2026-01-01T01:02:00.000Z");
+    const updated = await t.store.get("g");
+    assert.equal(updated.schedule.nextCheckAt, "2026-01-01T01:02:00.000Z");
+    assert.equal(updated.updatedAt, "2026-01-01T01:00:00.000Z");
   } finally {
     await t.cleanup();
   }
