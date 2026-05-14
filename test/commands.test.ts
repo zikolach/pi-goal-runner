@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { handleGoalCommand, splitArgs } from "../src/commands.js";
 import { createGoalStore } from "../src/state/store.js";
+import { acquireGoalLock } from "../src/state/lock.js";
 import { defaultSchedule } from "../src/policy.js";
 
 async function tempStore() {
@@ -46,6 +47,49 @@ test("decisions and answers validate choices", async () => {
     await assert.rejects(() => handleGoalCommand(t.store, "answer d1 no"), /Invalid choice/);
     assert.match(await handleGoalCommand(t.store, "answer d1 yes"), /Answered/);
     assert.match(await handleGoalCommand(t.store, "decisions"), /No pending/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("state-mutating commands respect active goal locks", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "g1", type: "github_pr_review", state: "active", summary: "Watch PR", schedule: defaultSchedule() });
+    const lock = await acquireGoalLock(t.store.paths, "g1");
+    assert.ok(lock);
+    try {
+      assert.match(await handleGoalCommand(t.store, "pause g1"), /goal is busy/);
+      assert.equal((await t.store.get("g1")).state, "active");
+    } finally {
+      await lock.release();
+    }
+    assert.match(await handleGoalCommand(t.store, "pause g1"), /paused/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("answer command respects active goal locks", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({
+      id: "g1",
+      type: "github_pr_review",
+      state: "needs_decision",
+      summary: "Watch PR",
+      schedule: defaultSchedule(),
+      pendingDecisions: [{ id: "d1", goalId: "g1", prompt: "Pick", options: [{ id: "yes", label: "Yes" }], createdAt: new Date().toISOString(), status: "pending", required: true }],
+    });
+    const lock = await acquireGoalLock(t.store.paths, "g1");
+    assert.ok(lock);
+    try {
+      await assert.rejects(() => handleGoalCommand(t.store, "answer d1 yes"), /busy/);
+      assert.equal((await t.store.get("g1")).pendingDecisions[0]?.status, "pending");
+    } finally {
+      await lock.release();
+    }
+    assert.match(await handleGoalCommand(t.store, "answer d1 yes"), /Answered/);
   } finally {
     await t.cleanup();
   }

@@ -56,7 +56,7 @@ async function updateExistingWorktree(worktreePath, branch) {
         catch (switchError) {
             if (!remoteCommit)
                 throw switchError;
-            await execFileAsync("git", ["-C", worktreePath, "switch", "--create", branch, "--track", `origin/${branch}`], { maxBuffer: 10 * 1024 * 1024 });
+            await execFileAsync("git", ["-C", worktreePath, "switch", `--create=${branch}`, "--track", `origin/${branch}`], { maxBuffer: 10 * 1024 * 1024 });
         }
         if (remoteCommit)
             await execFileAsync("git", ["-C", worktreePath, "reset", "--hard", remoteCommit], { maxBuffer: 10 * 1024 * 1024 });

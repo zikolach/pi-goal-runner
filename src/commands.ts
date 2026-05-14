@@ -6,6 +6,7 @@ import { createGithubPrGoal } from "./github/create.js";
 import { schedulerTick } from "./scheduler.js";
 import { redactText } from "./redaction.js";
 import { splitArgs } from "./args.js";
+import { withGoalLock } from "./state/lock.js";
 
 export { splitArgs } from "./args.js";
 
@@ -23,7 +24,8 @@ export async function handleGoalCommand(store: GoalStore, argsText: string, opti
   if (cmd === "pause" || cmd === "resume" || cmd === "cancel") {
     const id = required(args[1], "goal id");
     const state = cmd === "pause" ? "paused" : cmd === "resume" ? "active" : "cancelled";
-    const goal = await store.setState(id, state);
+    const goal = await withGoalLock(store.paths, id, () => store.setState(id, state));
+    if (!goal) return `${id}: goal is busy; try again later`;
     return `${goal.id}: ${goal.state}`;
   }
   if (cmd === "decisions") return formatDecisions(listPendingDecisions(await store.list()));
