@@ -154,6 +154,29 @@ test("worker stdout events are serialized in emission order", async () => {
   }
 });
 
+test("worker decision terminal event is not overridden by non-zero exit", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "console.log(JSON.stringify({type:'decision', decision:{id:'d', prompt:'Pick', options:[{id:'x', label:'X'}]}}));",
+          "process.exit(7);",
+        ].join(""),
+      ],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "needs_decision");
+    assert.equal(updated.runHistory.at(-1)?.status, "needs_decision");
+    assert.equal(updated.pendingDecisions.some((decision) => decision.id === "d" && decision.status === "pending"), true);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("worker exit without terminal event records failure", async () => {
   const t = await tempStore();
   try {
@@ -233,7 +256,7 @@ test("successful worker completion auto replies and resolves when enabled", asyn
     });
     const calls: string[][] = [];
     const gh = { run: async (args: string[]) => { calls.push(args); return "{}"; } };
-    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc", addressedThreadIds: ["t1"] });
+    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc1234", addressedThreadIds: ["t1"] });
     assert.equal(calls.some((args) => args.join(" ").includes("addPullRequestReviewThreadReply")), true);
     assert.equal(calls.some((args) => args.join(" ").includes("resolveReviewThread")), true);
   } finally {
@@ -253,7 +276,7 @@ test("auto reply and resolve failures are nonfatal events", async () => {
       github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: true, handledThreadIds: [], handledCheckNames: [] },
     });
     const gh = { run: async () => { throw new Error("boom"); } };
-    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc", addressedThreadIds: ["t1"] });
+    await handleSuccessfulWorkerComplete(t.store, gh, goal, { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc1234", addressedThreadIds: ["t1"] });
     const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
     assert.match(events, /Auto-reply\/resolve failed/);
     assert.equal((await t.store.get("g")).state, "active");

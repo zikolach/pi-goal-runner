@@ -3,7 +3,7 @@ import type { GhExecutor } from "./gh.js";
 
 export async function replyAndResolveAddressedThreads(gh: GhExecutor, config: GithubPrGoalConfig, event: CompleteEvent): Promise<string[]> {
   if (!config.autoReplyAndResolve) return [];
-  if (!event.commitSha) throw new Error("Refusing to reply/resolve without pushed commit evidence");
+  if (!event.commitSha || !isGitSha(event.commitSha)) throw new Error("Refusing to reply/resolve without valid pushed commit evidence");
   const threadIds = event.addressedThreadIds ?? [];
   const repo = `${config.repository.owner}/${config.repository.repo}`;
   const resolved: string[] = [];
@@ -17,6 +17,10 @@ export async function replyAndResolveAddressedThreads(gh: GhExecutor, config: Gi
   }
   if (resolved.length) await gh.run(["pr", "view", String(config.prNumber), "--repo", repo, "--json", "number"]);
   return resolved;
+}
+
+function isGitSha(value: string): boolean {
+  return /^[0-9a-f]{7,40}$/i.test(value);
 }
 
 function formatValidation(event: CompleteEvent): string {

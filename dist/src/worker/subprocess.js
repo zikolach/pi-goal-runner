@@ -17,16 +17,17 @@ export async function launchWorker(store, goal, prompt, options = {}) {
         let stdoutBuffer = "";
         let stderr = "";
         let timedOut = false;
-        let terminalEventSeen = false;
+        let terminalEventType;
         let settled = false;
         let ingestionQueue = Promise.resolve();
         const ingestionFailures = [];
         const enqueueEvent = (event, forcedStatus) => {
-            if (event.type === "complete" || event.type === "failure" || event.type === "decision")
-                terminalEventSeen = true;
+            const emittedTerminalType = event.type === "complete" || event.type === "failure" || event.type === "decision" ? event.type : undefined;
             ingestionQueue = ingestionQueue.catch(() => undefined).then(async () => {
                 try {
                     await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
+                    if (emittedTerminalType)
+                        terminalEventType = emittedTerminalType;
                     if (event.type === "complete" && event.status === "success")
                         await options.onComplete?.(event);
                 }
@@ -80,7 +81,11 @@ export async function launchWorker(store, goal, prompt, options = {}) {
                 if (stdoutBuffer.trim())
                     enqueueEvent(parseWorkerEventLine(goal.id, runId, stdoutBuffer));
                 await ingestionQueue;
-                if (timedOut) {
+                if (terminalEventType) {
+                    // Worker protocol terminal events are authoritative; process exit status
+                    // must not override a recorded completion, failure, or user decision.
+                }
+                else if (timedOut) {
                     const event = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: "Worker timed out", retryable: true };
                     await enqueueEvent(event, "timeout");
                 }
@@ -89,7 +94,7 @@ export async function launchWorker(store, goal, prompt, options = {}) {
                     const event = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker exited with ${exitReason}: ${redactText(stderr, 2_000)}`, retryable: true };
                     await enqueueEvent(event, "failed");
                 }
-                else if (!terminalEventSeen) {
+                else {
                     const suffix = ingestionFailures.length ? ` (${ingestionFailures.length} ingestion failure(s): ${ingestionFailures.join("; ")})` : "";
                     const event = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker exited successfully without emitting a terminal event${suffix}`, retryable: true };
                     await enqueueEvent(event, "failed");

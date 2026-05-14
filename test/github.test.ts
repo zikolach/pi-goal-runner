@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parsePr, parseRepo, type GhExecutor } from "../src/github/gh.js";
 import { findActionable, observeGithubPr } from "../src/github/observe.js";
+import { replyAndResolveAddressedThreads } from "../src/github/update.js";
 import type { GithubPrGoalConfig } from "../src/types.js";
 
 const config: GithubPrGoalConfig = {
@@ -45,6 +46,16 @@ test("observes review threads through GraphQL", async () => {
   const observation = await observeGithubPr(gh, config);
   assert.equal(observation.reviewThreads[0].id, "t1");
   assert.equal(findActionable(config, observation).actionable, true);
+});
+
+test("auto reply requires valid commit sha evidence", async () => {
+  const calls: string[][] = [];
+  const gh: GhExecutor = { run: async (args) => { calls.push(args); return "{}"; } };
+  await assert.rejects(
+    () => replyAndResolveAddressedThreads(gh, { ...config, autoReplyAndResolve: true }, { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done", commitSha: "not-a-sha", addressedThreadIds: ["t1"] }),
+    /valid pushed commit evidence/,
+  );
+  assert.deepEqual(calls, []);
 });
 
 test("detects new review and failing checks, ignores stale handled comments", () => {

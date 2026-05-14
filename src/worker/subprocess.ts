@@ -29,15 +29,16 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
     let stdoutBuffer = "";
     let stderr = "";
     let timedOut = false;
-    let terminalEventSeen = false;
+    let terminalEventType: "complete" | "failure" | "decision" | undefined;
     let settled = false;
     let ingestionQueue: Promise<void> = Promise.resolve();
     const ingestionFailures: string[] = [];
     const enqueueEvent = (event: GoalEvent, forcedStatus?: RunSummary["status"]) => {
-      if (event.type === "complete" || event.type === "failure" || event.type === "decision") terminalEventSeen = true;
+      const emittedTerminalType = event.type === "complete" || event.type === "failure" || event.type === "decision" ? event.type : undefined;
       ingestionQueue = ingestionQueue.catch(() => undefined).then(async () => {
         try {
           await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
+          if (emittedTerminalType) terminalEventType = emittedTerminalType;
           if (event.type === "complete" && event.status === "success") await options.onComplete?.(event);
         } catch (error) {
           ingestionFailures.push(redactText(error instanceof Error ? error.message : String(error), 1_000));
@@ -85,14 +86,17 @@ export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: s
       void (async () => {
         if (stdoutBuffer.trim()) enqueueEvent(parseWorkerEventLine(goal.id, runId, stdoutBuffer));
         await ingestionQueue;
-        if (timedOut) {
+        if (terminalEventType) {
+          // Worker protocol terminal events are authoritative; process exit status
+          // must not override a recorded completion, failure, or user decision.
+        } else if (timedOut) {
           const event: FailureEvent = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: "Worker timed out", retryable: true };
           await enqueueEvent(event, "timeout");
         } else if (code !== 0) {
           const exitReason = code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`;
           const event: FailureEvent = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker exited with ${exitReason}: ${redactText(stderr, 2_000)}`, retryable: true };
           await enqueueEvent(event, "failed");
-        } else if (!terminalEventSeen) {
+        } else {
           const suffix = ingestionFailures.length ? ` (${ingestionFailures.length} ingestion failure(s): ${ingestionFailures.join("; ")})` : "";
           const event: FailureEvent = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: `Worker exited successfully without emitting a terminal event${suffix}`, retryable: true };
           await enqueueEvent(event, "failed");

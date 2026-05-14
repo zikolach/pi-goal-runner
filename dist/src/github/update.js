@@ -1,8 +1,8 @@
 export async function replyAndResolveAddressedThreads(gh, config, event) {
     if (!config.autoReplyAndResolve)
         return [];
-    if (!event.commitSha)
-        throw new Error("Refusing to reply/resolve without pushed commit evidence");
+    if (!event.commitSha || !isGitSha(event.commitSha))
+        throw new Error("Refusing to reply/resolve without valid pushed commit evidence");
     const threadIds = event.addressedThreadIds ?? [];
     const repo = `${config.repository.owner}/${config.repository.repo}`;
     const resolved = [];
@@ -17,6 +17,9 @@ export async function replyAndResolveAddressedThreads(gh, config, event) {
     if (resolved.length)
         await gh.run(["pr", "view", String(config.prNumber), "--repo", repo, "--json", "number"]);
     return resolved;
+}
+function isGitSha(value) {
+    return /^[0-9a-f]{7,40}$/i.test(value);
 }
 function formatValidation(event) {
     const validations = event.validationResults ?? [];
