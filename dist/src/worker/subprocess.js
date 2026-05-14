@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { appendGoalEvent, parseWorkerEventLine } from "../state/events.js";
 import { addPendingDecision } from "../decisions.js";
 import { redactText } from "../redaction.js";
+import { increaseBackoff, nextCheckAt } from "../policy.js";
 export async function launchWorker(store, goal, prompt, options = {}) {
     const runId = `run-${Date.now().toString(36)}`;
     const run = { id: runId, startedAt: new Date().toISOString(), status: "running" };
@@ -121,8 +122,11 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
             return { ...addPendingDecision({ ...goal, runHistory }, event.decision), latestProgress: event.decision.prompt };
         if (event.type === "complete")
             return { ...goal, state: event.status === "quiet" ? "completed" : "active", latestProgress: event.summary, lastRunSummary: event.summary, runHistory, github: updateGithubHandledState(goal, event) };
-        if (event.type === "failure")
-            return { ...goal, state: "failed", latestProgress: event.message, runHistory };
+        if (event.type === "failure") {
+            const backoff = increaseBackoff(goal.schedule.backoff);
+            const failedAt = new Date(event.timestamp);
+            return { ...goal, state: "failed", latestProgress: event.message, runHistory, schedule: { ...goal.schedule, backoff, nextCheckAt: nextCheckAt(backoff, failedAt) } };
+        }
         return { ...goal, runHistory, latestProgress: event.message };
     });
 }

@@ -1,6 +1,7 @@
 import { createGoalStore } from "./state/store.js";
 import { GOAL_SUBCOMMANDS, handleGoalCommand } from "./commands.js";
 import { schedulerTick } from "./scheduler.js";
+import { parseDaemonInterval } from "./cli.js";
 
 interface ExtensionAPI {
   registerCommand(name: string, options: { description?: string; handler(args: string, ctx: ExtensionCommandContext): Promise<void> | void; getArgumentCompletions?(prefix: string): unknown[] | null | Promise<unknown[] | null> }): void;
@@ -54,7 +55,13 @@ export default function goalRunnerExtension(pi: ExtensionAPI): void {
   pi.on?.("session_start", async (_event, ctx) => {
     await store.init();
     await refreshWidget(ctx);
-    const intervalMs = Number(process.env.PI_GOAL_RUNNER_INTERVAL_MS ?? "60000");
+    let intervalMs: number;
+    try {
+      intervalMs = parseDaemonInterval(process.env.PI_GOAL_RUNNER_INTERVAL_MS);
+    } catch (error) {
+      ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+      return;
+    }
     if (intervalMs > 0) {
       timer = setInterval(() => {
         void schedulerTick(store, { worker: { dryRun: process.env.PI_GOAL_RUNNER_DRY_RUN === "1" } })

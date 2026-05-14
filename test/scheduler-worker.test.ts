@@ -43,6 +43,19 @@ test("scheduler no-op applies quiet completion without launching worker", async 
   }
 });
 
+test("scheduler uses injected time for quiet policy updates", async () => {
+  const t = await tempStore();
+  try {
+    const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
+    await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule, cwd: process.cwd(), github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] } });
+    const gh = { run: async (args: string[]) => args[0] === "api" ? JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [] } } } } }) : JSON.stringify({ statusCheckRollup: [] }) };
+    await schedulerTick(t.store, { gh, now: new Date("2026-01-01T01:00:00Z"), worker: { dryRun: true } });
+    assert.equal((await t.store.get("g")).schedule.nextCheckAt, "2026-01-01T01:02:00.000Z");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("worker event ingestion records decisions, completion, failures", async () => {
   const t = await tempStore();
   try {
@@ -53,6 +66,19 @@ test("worker event ingestion records decisions, completion, failures", async () 
     assert.equal((await t.store.get("g")).lastRunSummary, "done");
     await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "quiet", summary: "quiet" });
     assert.equal((await t.store.get("g")).state, "completed");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker failure events apply retry backoff", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(new Date("2026-01-01T00:00:00Z")), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "g", "r", { type: "failure", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", message: "failed", retryable: true });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "failed");
+    assert.equal(updated.schedule.nextCheckAt, "2026-01-01T00:02:00.000Z");
   } finally {
     await t.cleanup();
   }

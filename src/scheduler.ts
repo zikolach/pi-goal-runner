@@ -59,8 +59,8 @@ export async function schedulerTick(store: GoalStore, options: SchedulerOptions 
     } catch (error) {
       result.failures++;
       const message = safeError(error);
-      await appendGoalEvent(store.paths, { type: "failure", goalId: goal.id, timestamp: new Date().toISOString(), message, retryable: true });
-      await store.update(goal.id, (current) => ({ ...current, state: "failed", latestProgress: message, schedule: { ...current.schedule, nextCheckAt: nextCheckAt(current.schedule.backoff) } }));
+      await appendGoalEvent(store.paths, { type: "failure", goalId: goal.id, timestamp: now.toISOString(), message, retryable: true });
+      await store.update(goal.id, (current) => ({ ...current, state: "failed", latestProgress: message, schedule: { ...current.schedule, nextCheckAt: nextCheckAt(current.schedule.backoff, now) } }));
       result.messages.push(`${goal.id}: ${message}`);
     } finally {
       await lock.release();
@@ -70,24 +70,25 @@ export async function schedulerTick(store: GoalStore, options: SchedulerOptions 
 }
 
 async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sink: NotificationSink, options: SchedulerOptions): Promise<boolean> {
+  const now = options.now ?? new Date();
   if (goal.type !== "github_pr_review" || !goal.github) throw new Error(`Unsupported goal type: ${goal.type}`);
   const observation: GithubObservation = await observeGithubPr(gh, goal.github);
   const actionable: ActionableObservation = findActionable(goal.github, observation);
   await store.update(goal.id, (current) => ({ ...current, github: current.github ? { ...current.github, lastObservedAt: observation.observedAt, repository: { ...current.github.repository, branch: observation.headBranch ?? current.github.repository.branch } } : current.github }));
   if (!actionable.actionable) {
-    const updated = applyNoActionPolicy(await store.get(goal.id), observation.observedAt);
+    const updated = applyNoActionPolicy(await store.get(goal.id), observation.observedAt, now);
     await store.update(goal.id, () => updated);
     if (updated.state === "completed" || updated.state === "dormant") {
-      const event = { type: "complete" as const, goalId: goal.id, timestamp: new Date().toISOString(), status: "quiet" as const, summary: `Quiet window expired: ${actionable.reason}` };
+      const event = { type: "complete" as const, goalId: goal.id, timestamp: now.toISOString(), status: "quiet" as const, summary: `Quiet window expired: ${actionable.reason}` };
       await appendGoalEvent(store.paths, event);
       await notifyNonFatal(store, sink, updated, event);
     }
     return false;
   }
-  const actionableGoal = await store.update(goal.id, (current) => applyActionablePolicy(current));
+  const actionableGoal = await store.update(goal.id, (current) => applyActionablePolicy(current, now));
   const worktreeGoal = await ensureGoalWorktree(store, actionableGoal);
   const prompt = buildWorkerPrompt(worktreeGoal, observation, actionable);
-  const event = { type: "progress" as const, goalId: goal.id, timestamp: new Date().toISOString(), message: `Launching worker: ${actionable.reason}` };
+  const event = { type: "progress" as const, goalId: goal.id, timestamp: now.toISOString(), message: `Launching worker: ${actionable.reason}` };
   await appendGoalEvent(store.paths, event);
   await notifyNonFatal(store, sink, worktreeGoal, event);
   if (options.worker?.dryRun) return true;

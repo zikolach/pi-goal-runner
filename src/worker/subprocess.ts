@@ -4,6 +4,7 @@ import type { GoalStore } from "../state/store.js";
 import type { CompleteEvent, FailureEvent, GoalEvent, GoalRecord, RunSummary } from "../types.js";
 import { addPendingDecision } from "../decisions.js";
 import { redactText } from "../redaction.js";
+import { increaseBackoff, nextCheckAt } from "../policy.js";
 
 export interface WorkerLaunchOptions {
   command?: string;
@@ -118,7 +119,11 @@ export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId:
     if (event.type === "progress") return { ...goal, latestProgress: event.message, runHistory };
     if (event.type === "decision") return { ...addPendingDecision({ ...goal, runHistory }, event.decision), latestProgress: event.decision.prompt };
     if (event.type === "complete") return { ...goal, state: event.status === "quiet" ? "completed" : "active", latestProgress: event.summary, lastRunSummary: event.summary, runHistory, github: updateGithubHandledState(goal, event) };
-    if (event.type === "failure") return { ...goal, state: "failed", latestProgress: event.message, runHistory };
+    if (event.type === "failure") {
+      const backoff = increaseBackoff(goal.schedule.backoff);
+      const failedAt = new Date(event.timestamp);
+      return { ...goal, state: "failed", latestProgress: event.message, runHistory, schedule: { ...goal.schedule, backoff, nextCheckAt: nextCheckAt(backoff, failedAt) } };
+    }
     return { ...goal, runHistory, latestProgress: event.message };
   });
 }

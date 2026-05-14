@@ -15,6 +15,8 @@ const config: GithubPrGoalConfig = {
 
 test("parses repositories and PRs", () => {
   assert.deepEqual(parseRepo("zikolach/pi-goal-runner").owner, "zikolach");
+  assert.deepEqual(parseRepo("https://github.com/owner/my.repo.git"), { owner: "owner", repo: "my.repo", url: "https://github.com/owner/my.repo" });
+  assert.equal(parsePr("ignored/repo", "https://github.com/owner/my.repo/pull/5").repository.repo, "my.repo");
   assert.equal(parsePr("ignored/repo", "https://github.com/zikolach/pi-goal-runner/pull/5").prNumber, 5);
 });
 
