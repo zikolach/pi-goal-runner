@@ -3,7 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "no
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createGoalStore } from "../src/state/store.js";
+import { createGoalId, createGoalStore } from "../src/state/store.js";
 import { appendGoalEvent, parseWorkerEventLine } from "../src/state/events.js";
 import { acquireGoalLock, DEFAULT_GOAL_LOCK_STALE_MS } from "../src/state/lock.js";
 import { replaceFile, writeJsonAtomic } from "../src/state/json.js";
@@ -32,6 +32,23 @@ test("blank state root env falls back to the home state directory", () => {
   } finally {
     if (original === undefined) delete process.env.PI_GOAL_STATE_DIR;
     else process.env.PI_GOAL_STATE_DIR = original;
+  }
+});
+
+test("generated goal ids use random UUIDs", () => {
+  const id = createGoalId("pr");
+  assert.match(id, /^pr-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+  assert.notEqual(createGoalId("pr"), createGoalId("pr"));
+});
+
+test("creating a goal never overwrites an existing goal directory", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "safe" });
+    await assert.rejects(() => t.store.create({ id: "goal-1", type: "github_pr_review", state: "active", summary: "collision" }), /Goal already exists: goal-1/);
+    assert.equal((await t.store.get("goal-1")).summary, "safe");
+  } finally {
+    await t.cleanup();
   }
 });
 

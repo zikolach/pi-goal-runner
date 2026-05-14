@@ -2,6 +2,7 @@ import { createGoalId } from "../state/store.js";
 import { defaultSchedule } from "../policy.js";
 import { redactText } from "../redaction.js";
 import { ensureGhAuth, parsePr } from "./gh.js";
+const MAX_VALIDATION_COMMAND_LENGTH = 1_000;
 export async function createGithubPrGoal(store, gh, repoOrUrl, prNumberOrUrl, options = {}) {
     const quietWindowMs = validateNonNegativeFiniteOption("quietWindowMs", options.quietWindowMs);
     const initialBackoffMs = validateNonNegativeFiniteOption("initialBackoffMs", options.initialBackoffMs);
@@ -54,7 +55,11 @@ export async function createGithubPrGoal(store, gh, repoOrUrl, prNumberOrUrl, op
     });
 }
 function sanitizeValidationCommands(commands) {
-    return commands.map((command) => redactText(command, 1_000));
+    return commands.map((command) => {
+        if (command.length > MAX_VALIDATION_COMMAND_LENGTH)
+            throw new Error(`validation command exceeds ${MAX_VALIDATION_COMMAND_LENGTH} characters`);
+        return redactText(command, MAX_VALIDATION_COMMAND_LENGTH + 256);
+    });
 }
 function readOwnerLogin(owner) {
     if (typeof owner === "string")

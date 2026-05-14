@@ -92,6 +92,22 @@ test("redacts validation commands before persisting PR goals", async () => {
   }
 });
 
+test("rejects oversized validation commands instead of truncating them", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
+  try {
+    const store = createGoalStore(dir);
+    const gh: GhExecutor = {
+      run: async (args) => {
+        if (args[0] === "auth") return "";
+        return JSON.stringify({ url: "u", headRefName: "feature", baseRefName: "main", headRepositoryOwner: { login: "owner" } });
+      },
+    };
+    await assert.rejects(() => createGithubPrGoal(store, gh, "owner/repo", "1", { validationCommands: [`npm test ${"x".repeat(1_001)}`] }), /validation command exceeds 1000 characters/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("validates schedule overrides when creating a goal", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-github-"));
   try {
@@ -196,6 +212,26 @@ test("auto reply passes thread and body GraphQL variables as raw strings", async
     assert.equal(args[threadFlagIndex], "-f");
     assert.equal(args.includes("-F"), false);
   }
+});
+
+test("auto reply skips invalid thread ids and continues after per-thread failures", async () => {
+  const calls: string[][] = [];
+  const gh: GhExecutor = {
+    run: async (args) => {
+      calls.push(args);
+      if (args.some((arg) => arg === "thread=bad-thread")) throw new Error("thread vanished");
+      return "{}";
+    },
+  };
+  const resolved = await replyAndResolveAddressedThreads(
+    gh,
+    { ...config, autoReplyAndResolve: true },
+    { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done", commitSha: "abcdef1", addressedThreadIds: ["[REDACTED]", "bad-thread", "good-thread"] },
+  );
+  assert.deepEqual(resolved, ["good-thread"]);
+  assert.equal(calls.some((args) => args.includes("thread=[REDACTED]")), false);
+  assert.ok(calls.some((args) => args.includes("thread=bad-thread")));
+  assert.ok(calls.some((args) => args.includes("thread=good-thread")));
 });
 
 test("detects new review and failing checks, ignores stale handled comments", () => {

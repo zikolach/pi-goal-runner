@@ -1,4 +1,5 @@
-import { readdir } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import type { GoalRecord, GoalState } from "../types.js";
 import { defaultSchedule } from "../policy.js";
 import { ensureDir, readJsonFile, writeJsonAtomic } from "./json.js";
@@ -37,7 +38,12 @@ export function createGoalStore(root?: string): GoalStore {
         pendingDecisions: input.pendingDecisions ?? [],
         schedule: input.schedule ?? defaultSchedule(new Date(now)),
       };
-      await ensureDir(paths.goalDir(goal.id));
+      try {
+        await mkdir(paths.goalDir(goal.id), { mode: 0o700 });
+      } catch (error) {
+        if (isNodeError(error) && error.code === "EEXIST") throw new Error(`Goal already exists: ${goal.id}`);
+        throw error;
+      }
       await writeJsonAtomic(paths.stateFile(goal.id), goal);
       return goal;
     },
@@ -76,8 +82,11 @@ export function createGoalStore(root?: string): GoalStore {
 }
 
 export function createGoalId(prefix = "goal"): string {
-  const random = Math.random().toString(36).slice(2, 8);
-  return `${prefix}-${Date.now().toString(36)}-${random}`;
+  return `${prefix}-${randomUUID()}`;
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function isListableGoalRecord(goal: GoalRecord): boolean {
