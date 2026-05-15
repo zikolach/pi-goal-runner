@@ -1,8 +1,10 @@
 import { createGoalStore } from "./state/store.js";
 import { GOAL_SUBCOMMANDS, handleGoalCommand } from "./commands.js";
-import { schedulerTick } from "./scheduler.js";
+import { runGoalNow, schedulerTick } from "./scheduler.js";
 import { parseDaemonInterval } from "./cli.js";
 import { isTerminal } from "./policy.js";
+import { cancelGoal, pauseGoal, resumeGoal } from "./goal-operations.js";
+import { GoalManagerDialog } from "./goal-management-ui.js";
 export function runSerializedSchedulerTick(state, tick, onError) {
     if (state.inFlight)
         return false;
@@ -65,7 +67,13 @@ export default function goalRunnerExtension(pi) {
             return null;
         },
         handler: async (args, ctx) => {
+            const command = splitCompletionPrefix(args)[0] ?? "";
             try {
+                if (command === "ui") {
+                    await showGoalManager(store, ctx);
+                    await refreshWidget(ctx);
+                    return;
+                }
                 const output = await handleGoalCommand(store, args, { cwd: ctx.cwd });
                 ctx.ui.notify(output, "info");
                 await refreshWidget(ctx);
@@ -75,6 +83,64 @@ export default function goalRunnerExtension(pi) {
             }
         },
     });
+    pi.registerCommand("goals", {
+        description: "Open goal manager",
+        handler: async (_args, ctx) => {
+            try {
+                await showGoalManager(store, ctx);
+                await refreshWidget(ctx);
+            }
+            catch (error) {
+                ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+            }
+        },
+    });
+    async function showGoalManager(currentStore, ctx) {
+        if (!ctx.hasUI || typeof ctx.ui.custom !== "function") {
+            ctx.ui.notify("Interactive goal management requires an interactive Pi session.", "warning");
+            return;
+        }
+        const initialGoals = await currentStore.list();
+        await ctx.ui.custom((tui, _theme, _kb, done) => {
+            const component = new GoalManagerDialog(initialGoals, {
+                loadGoals: async () => currentStore.list(),
+                loadGoal: async (goalId) => {
+                    try {
+                        return await currentStore.get(goalId);
+                    }
+                    catch {
+                        return undefined;
+                    }
+                },
+                pauseGoal: async (goalId) => {
+                    const result = await pauseGoal(currentStore, goalId);
+                    return { ok: result.ok, reason: result.reason };
+                },
+                resumeGoal: async (goalId) => {
+                    const result = await resumeGoal(currentStore, goalId);
+                    return { ok: result.ok, reason: result.reason };
+                },
+                cancelGoal: async (goalId) => {
+                    const result = await cancelGoal(currentStore, goalId);
+                    return { ok: result.ok, reason: result.reason };
+                },
+                runGoalNow: async (goalId) => {
+                    const result = await runGoalNow(currentStore, goalId, { worker: { dryRun: process.env.PI_GOAL_RUNNER_DRY_RUN === "1" } });
+                    if (result.failures > 0)
+                        return { ok: false, reason: result.messages.at(-1) };
+                    if (result.skipped > 0)
+                        return { ok: false, reason: result.messages.at(-1) };
+                    return { ok: true };
+                },
+                notify: (message, type) => {
+                    ctx.ui.notify(message, type);
+                },
+            }, () => tui.requestRender(), (result) => {
+                done(result);
+            });
+            return component;
+        });
+    }
     pi.on?.("session_start", async (_event, ctx) => {
         await store.init();
         await refreshWidget(ctx);

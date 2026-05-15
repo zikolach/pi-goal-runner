@@ -1,13 +1,13 @@
 import { answerDecision, listPendingDecisions } from "./decisions.js";
+import { cancelGoal, pauseGoal, resumeGoal } from "./goal-operations.js";
 import { createGhExecutor } from "./github/gh.js";
 import { createGithubPrGoal } from "./github/create.js";
 import { schedulerTick } from "./scheduler.js";
 import { redactText } from "./redaction.js";
 import { splitArgs } from "./args.js";
-import { withGoalLock } from "./state/lock.js";
 import { getGoalDisplayMetadata } from "./adapters/registry.js";
 export { splitArgs } from "./args.js";
-export const GOAL_SUBCOMMANDS = ["help", "list", "status", "pause", "resume", "cancel", "decisions", "answer", "watch-pr", "tick"];
+export const GOAL_SUBCOMMANDS = ["help", "list", "status", "pause", "resume", "cancel", "decisions", "answer", "watch-pr", "tick", "ui"];
 export async function handleGoalCommand(store, argsText, options = {}) {
     return handleGoalCommandArgs(store, splitArgs(argsText), options);
 }
@@ -21,13 +21,20 @@ export async function handleGoalCommandArgs(store, args, options = {}) {
         const id = required(args[1], "goal id");
         return formatGoalStatus(await store.get(id));
     }
-    if (cmd === "pause" || cmd === "resume" || cmd === "cancel") {
+    if (cmd === "pause") {
         const id = required(args[1], "goal id");
-        const state = cmd === "pause" ? "paused" : cmd === "resume" ? "active" : "cancelled";
-        const goal = await withGoalLock(store.paths, id, () => store.setState(id, state));
-        if (!goal)
-            return `${id}: goal is busy; try again later`;
-        return `${goal.id}: ${goal.state}`;
+        const result = await pauseGoal(store, id);
+        return result.ok ? `${result.goal.id}: ${result.goal.state}` : result.reason ?? `${id}: goal is busy; try again later`;
+    }
+    if (cmd === "resume") {
+        const id = required(args[1], "goal id");
+        const result = await resumeGoal(store, id);
+        return result.ok ? `${result.goal.id}: ${result.goal.state}` : result.reason ?? `${id}: goal is busy; try again later`;
+    }
+    if (cmd === "cancel") {
+        const id = required(args[1], "goal id");
+        const result = await cancelGoal(store, id);
+        return result.ok ? `${result.goal.id}: ${result.goal.state}` : result.reason ?? `${id}: goal is busy; try again later`;
     }
     if (cmd === "decisions")
         return formatDecisions(listPendingDecisions(await store.list()));
@@ -59,7 +66,9 @@ export function goalHelp() {
 /goal decisions
 /goal answer <decision-id> <choice>
 /goal watch-pr <owner/repo|url> <pr-number|url> [--quiet-ms N] [--validation "npm test"] [--auto-resolve]
-/goal tick`;
+/goal tick
+/goal ui
+/goals`;
 }
 export function formatGoalList(goals) {
     if (!goals.length)

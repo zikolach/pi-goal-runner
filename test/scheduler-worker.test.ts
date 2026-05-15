@@ -6,7 +6,7 @@ import test from "node:test";
 import { createGoalStore } from "../src/state/store.js";
 import { defaultSchedule } from "../src/policy.js";
 import { MAX_HANDLED_CHECK_NAMES, MAX_HANDLED_THREAD_IDS } from "../src/github/handled.js";
-import { handleSuccessfulWorkerComplete, selectDueGoals, schedulerTick } from "../src/scheduler.js";
+import { handleSuccessfulWorkerComplete, runGoalNow, selectDueGoals, schedulerTick } from "../src/scheduler.js";
 import { ingestWorkerEvent, launchWorker, MAX_WORKER_STDOUT_BUFFER_CHARS, startWorker } from "../src/worker/subprocess.js";
 import { CommandNotificationSink, createDefaultNotificationSink, notifyNonFatal } from "../src/notifications.js";
 
@@ -106,6 +106,80 @@ test("due selection skips paused/cancelled/waiting goals", async () => {
     await t.store.create({ id: "d", type: "github_pr_review", state: "needs_decision", summary: "d", schedule, pendingDecisions: [{ id: "d1", goalId: "d", prompt: "?", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true }] });
     await t.store.create({ id: "n", type: "github_pr_review", state: "active", summary: "n", schedule, pendingDecisions: [{ id: "n1", goalId: "n", prompt: "?", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: false }] });
     assert.deepEqual((await selectDueGoals(t.store, new Date("2026-01-01T00:00:01Z"))).map((g) => g.id), ["a", "n"]);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("runGoalNow can make non-due goal due immediately and avoids forced worker launch", async () => {
+  const t = await tempStore();
+  try {
+    const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
+    schedule.nextCheckAt = new Date("2026-01-01T01:00:00Z").toISOString();
+    await t.store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule,
+      cwd: process.cwd(),
+      github: { repository: { owner: "o", repo: "r", branch: "main" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    let calls = 0;
+    const gh = {
+      run: async (args: string[]) => {
+        calls++;
+        if (args[0] === "pr") {
+          return JSON.stringify({ url: "https://github.com/o/r/pull/1", headRefName: "main", headRefOid: "sha", statusCheckRollup: [] });
+        }
+        return JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } } } } } });
+      },
+    };
+
+    const result = await runGoalNow(t.store, "g", { gh, now: new Date("2026-01-01T00:00:00Z"), worker: { dryRun: true } });
+    const updated = await t.store.get("g");
+
+    assert.equal(result.checked, 1);
+    assert.equal(result.launched, 0);
+    assert.equal(result.failures, 0);
+    assert.equal(result.skipped, 0);
+    assert.equal(updated.state, "active");
+    assert.ok(calls > 0);
+    assert.equal(calls >= 1, true);
+    assert.notEqual(updated.schedule.nextCheckAt, schedule.nextCheckAt);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("runGoalNow does not start another worker when goal is running", async () => {
+  const t = await tempStore();
+  try {
+    const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
+    await t.store.create({
+      id: "running",
+      type: "github_pr_review",
+      state: "running",
+      summary: "running",
+      schedule,
+      runHistory: [{ id: "r1", startedAt: "2026-01-01T00:00:00Z", status: "running" }],
+      github: { repository: { owner: "o", repo: "r", branch: "main" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    let called = false;
+    const gh = {
+      run: async () => {
+        called = true;
+        throw new Error("goal is running");
+      },
+    };
+
+    const result = await runGoalNow(t.store, "running", { gh, now: new Date("2026-01-01T00:00:00Z") });
+    assert.equal(result.skipped, 1);
+    assert.equal(result.failures, 0);
+    assert.equal(result.launched, 0);
+    assert.equal(called, false);
   } finally {
     await t.cleanup();
   }
