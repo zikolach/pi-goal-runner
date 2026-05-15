@@ -660,7 +660,7 @@ test("worker complete terminal event is not overridden by non-zero exit and reco
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
     await launchWorker(t.store, goal, "", {
       command: process.execPath,
-      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => process.exit(9));"] ,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => process.exit(9));"],
     });
     const updated = await t.store.get("g");
     assert.equal(updated.state, "active");
@@ -707,7 +707,7 @@ test("worker terminal outcome survives diagnostic write failure", async () => {
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
     await launchWorker(t.store, goal, "", {
       command: process.execPath,
-      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => process.exit(9));"] ,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => process.exit(9));"],
       onComplete: async () => {
         const eventsFile = t.store.paths.eventsFile("g");
         await rm(eventsFile, { force: true });
@@ -788,7 +788,7 @@ test("worker emitted failure remains authoritative when process exits zero", asy
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
     await launchWorker(t.store, goal, "", {
       command: process.execPath,
-      args: ["-e", "process.stdout.write(JSON.stringify({type:'failure', message:'emitted failure', retryable:true}) + '\\n', () => process.exit(0));"] ,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'failure', message:'emitted failure', retryable:true}) + '\\n', () => process.exit(0));"],
     });
     const updated = await t.store.get("g");
     assert.equal(updated.state, "failed");
