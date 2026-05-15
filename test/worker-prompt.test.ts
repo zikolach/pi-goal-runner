@@ -40,7 +40,7 @@ test("worker prompt explains detached worktree push target", () => {
   const prompt = buildWorkerPrompt(createPromptGoal({ worktreePath: "/tmp/wt", worktreeMode: "isolated", worktreeHeadSha: "def456", pushRemote: "origin", pushBranch: "feature" }), observation, actionable);
 
   assert.match(prompt, /Worker checkout: isolated detached worktree/);
-  assert.match(prompt, /Checked-out PR head: def456/);
+  assert.match(prompt, /Checked-out worktree HEAD: def456/);
   assert.match(prompt, /Push destination: origin HEAD:feature/);
   assert.match(prompt, /git push origin HEAD:feature/);
   assert.match(prompt, /without force by default/);
@@ -48,7 +48,12 @@ test("worker prompt explains detached worktree push target", () => {
 });
 
 test("worker prompt labels explicit same-path mode", () => {
-  const prompt = buildWorkerPrompt(createPromptGoal({ worktreePath: "/tmp/repo", worktreeMode: "same_path" }), observation, actionable);
+  const prompt = buildWorkerPrompt(createPromptGoal({ worktreePath: "/tmp/repo", worktreeMode: "same_path", pushRemote: "origin", pushBranch: "feature" }), observation, actionable);
 
   assert.match(prompt, /Worker checkout: user checkout \(explicit same-path mode\)/);
+  assert.match(prompt, /Checked-out worktree HEAD: abc123/);
+  assert.match(prompt, /explicit same-path mode/);
+  assert.match(prompt, /git push origin HEAD:feature/);
+  assert.match(prompt, /git push origin feature/);
+  assert.doesNotMatch(prompt, /If this is an isolated detached worktree/);
 });

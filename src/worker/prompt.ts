@@ -14,7 +14,9 @@ export function buildWorkerPrompt(goal: GoalRecord, observation: GithubObservati
   const pushTarget = branch === "unknown" ? "unknown; ask for guidance before pushing" : `${pushRemote} HEAD:${branch}`;
   const pushInstruction = branch === "unknown"
     ? "If the push target is unknown, emit a decision instead of guessing."
-    : `If this is an isolated detached worktree, push the successful commit with \`git push ${pushRemote} HEAD:${branch}\` without force by default; do not rely on a local branch being checked out.`;
+    : worktreeMode === "same_path"
+      ? `This goal is using explicit same-path mode. Confirm your local checkout state is intended, then push to the PR branch with \`git push ${pushRemote} HEAD:${branch}\` (or \`git push ${pushRemote} ${branch}\` when that branch is checked out), without force by default.`
+      : `If this is an isolated detached worktree, push the successful commit with \`git push ${pushRemote} HEAD:${branch}\` without force by default; do not rely on a local branch being checked out.`;
   return `You are a Pi worker subprocess for a durable GitHub PR review goal.
 
 Goal:
@@ -24,7 +26,7 @@ Goal:
 - PR branch / push branch: ${branch}
 - Worker checkout: ${checkoutDescription}
 - Worktree: ${goal.github.repository.worktreePath ?? "not assigned"}
-- Checked-out PR head: ${observedHeadSha}
+- Checked-out worktree HEAD: ${observedHeadSha}
 - Push remote: ${pushRemote}
 - Push destination: ${pushTarget}
 - Quiet window: ${goal.schedule.quietWindow.durationMs}ms
