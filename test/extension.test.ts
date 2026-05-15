@@ -101,8 +101,9 @@ test("daemon suggestion helper only recommends for goals the daemon can check", 
     ]),
     true,
   );
-  assert.match(buildDaemonSuggestionMessage(2), /2 active goals/);
-  assert.match(buildDaemonSuggestionMessage(1), /1 active goal\)/);
+  assert.match(buildDaemonSuggestionMessage(2), /2 goals eligible for daemon checks/);
+  assert.match(buildDaemonSuggestionMessage(1), /1 goal eligible for daemon checks\)/);
+  assert.doesNotMatch(buildDaemonSuggestionMessage(1), /active goal/);
   assert.match(buildDaemonSuggestionMessage(1), /npm run goal -- daemon/);
 });
 
@@ -152,7 +153,7 @@ test("extension shutdown reminds for stored daemon-eligible goals only", async (
     assert.equal(notifications.length, 1);
     const notification = notifications[0] as { message: string; type?: string };
     assert.equal(notification.type, "info");
-    assert.match(notification.message, /1 active goal\)/);
+    assert.match(notification.message, /1 goal eligible for daemon checks\)/);
     assert.equal(stderrWrites.length, 1);
     assert.match(stderrWrites[0] ?? "", /npm run goal -- daemon/);
   } finally {

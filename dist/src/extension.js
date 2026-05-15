@@ -32,8 +32,8 @@ export function splitCompletionPrefix(prefix) {
 export function shouldSuggestDaemon(goals) {
     return goals.some(isDaemonEligibleGoal);
 }
-export function buildDaemonSuggestionMessage(activeCount) {
-    return `Goal runner extension stops when the session exits (${activeCount} active goal${activeCount === 1 ? "" : "s"}). Run \`npm run goal -- daemon\` from the pi-goal-runner checkout to keep checking in background.`;
+export function buildDaemonSuggestionMessage(daemonEligibleCount) {
+    return `Goal runner extension stops when the session exits (${daemonEligibleCount} goal${daemonEligibleCount === 1 ? "" : "s"} eligible for daemon checks). Run \`npm run goal -- daemon\` from the pi-goal-runner checkout to keep checking in background.`;
 }
 function isDaemonEligibleGoal(goal) {
     return !isTerminal(goal.state)
@@ -102,9 +102,9 @@ export default function goalRunnerExtension(pi) {
         timer = undefined;
         try {
             const goals = await store.list();
-            const active = goals.filter(isDaemonEligibleGoal);
-            if (active.length > 0) {
-                const message = buildDaemonSuggestionMessage(active.length);
+            const daemonEligibleGoals = goals.filter(isDaemonEligibleGoal);
+            if (daemonEligibleGoals.length > 0) {
+                const message = buildDaemonSuggestionMessage(daemonEligibleGoals.length);
                 try {
                     ctx.ui.notify(message, "info");
                 }
