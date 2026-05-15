@@ -142,6 +142,8 @@ GitHub PR workers are prepared in per-goal linked worktrees under the state root
 
 The worker prompt carries push-target metadata separately from checkout state: repository owner/name, push remote, target PR branch, current worktree path, and checked-out head SHA. When a worker fixes a PR from detached HEAD, it is instructed to push with `git push <remote> HEAD:<branch>` without force by default and to report the pushed commit SHA in its completion event.
 
+Completed worker changes are not copied back into your original checkout. The handoff is remote-first: isolated worker worktree → remote PR branch → your local checkout when you explicitly fetch or pull. For example, after a successful worker run you can update a local PR branch with `git fetch origin && git switch <branch> && git pull --ff-only`, or update `main` after the PR merges with `git switch main && git pull --ff-only`. This keeps daemon-triggered edits from overwriting or mixing with local human work.
+
 Reusable isolated worktrees are refreshed before launch. If an isolated worktree contains uncommitted tracked or untracked files, the scheduler records a retryable failure instead of resetting or deleting those changes. If a stored worktree path points at the user's active checkout, it is migrated back to the managed per-goal worktree on the next run unless the goal explicitly opts into `same_path` mode. Manual cleanup can use normal Git commands such as `git worktree list`, `git worktree remove <path>`, and `git worktree prune`.
 
 Worker execution uses `pi --print` by default and sends the explicit goal prompt on stdin. Override with:
