@@ -135,10 +135,13 @@ export default function goalRunnerExtension(pi: ExtensionAPI): void {
     const active = goals.filter((goal) => !["completed", "cancelled", "dormant"].includes(goal.state)).length;
     const decisions = goals.reduce((count, goal) => count + goal.pendingDecisions.filter((decision) => decision.status === "pending").length, 0);
     ctx.ui.setStatus?.("goals", active ? `goals:${active}${decisions ? ` decisions:${decisions}` : ""}` : undefined);
-    if (decisions) {
-      ctx.ui.setWidget?.("goals", [`${decisions} goal decision(s) pending. Run /goal decisions.`]);
-    } else {
+    if (!active) {
       ctx.ui.setWidget?.("goals", undefined);
+      return;
     }
+    const lines: string[] = [];
+    if (decisions) lines.push(`${decisions} goal decision(s) pending. Run /goal decisions.`);
+    lines.push("Tip: run `pi-goal-runner daemon` before exiting Pi to keep goal checks running in background.");
+    ctx.ui.setWidget?.("goals", lines);
   }
 }
