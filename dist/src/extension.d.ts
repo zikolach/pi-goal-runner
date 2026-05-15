@@ -1,3 +1,4 @@
+import type { GoalRecord } from "./types.js";
 interface ExtensionAPI {
     registerCommand(name: string, options: {
         description?: string;
@@ -21,5 +22,7 @@ export interface SerializedTickState {
 }
 export declare function runSerializedSchedulerTick(state: SerializedTickState, tick: () => Promise<void>, onError: (error: unknown) => void): boolean;
 export declare function splitCompletionPrefix(prefix: string): string[];
+export declare function shouldSuggestDaemon(goals: GoalRecord[]): boolean;
+export declare function buildDaemonSuggestionMessage(activeCount: number): string;
 export default function goalRunnerExtension(pi: ExtensionAPI): void;
 export {};

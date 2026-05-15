@@ -28,6 +28,13 @@ export function splitCompletionPrefix(prefix) {
         return [...parts, ""];
     return parts;
 }
+const TERMINAL_GOAL_STATES = new Set(["completed", "cancelled", "dormant"]);
+export function shouldSuggestDaemon(goals) {
+    return goals.some((goal) => !TERMINAL_GOAL_STATES.has(goal.state) && goal.state !== "paused");
+}
+export function buildDaemonSuggestionMessage(activeCount) {
+    return `Goal runner extension stops when the session exits (${activeCount} active goal${activeCount === 1 ? "" : "s"}). Run \`pi-goal-runner daemon\` to keep checking in background.`;
+}
 export default function goalRunnerExtension(pi) {
     const store = createGoalStore();
     let timer;
@@ -83,10 +90,19 @@ export default function goalRunnerExtension(pi) {
             timer.unref();
         }
     });
-    pi.on?.("session_shutdown", () => {
+    pi.on?.("session_shutdown", async (_event, ctx) => {
         if (timer)
             clearInterval(timer);
         timer = undefined;
+        try {
+            const goals = await store.list();
+            const active = goals.filter((goal) => !TERMINAL_GOAL_STATES.has(goal.state) && goal.state !== "paused");
+            if (active.length > 0)
+                ctx.ui.notify(buildDaemonSuggestionMessage(active.length), "info");
+        }
+        catch {
+            // Best effort only; session is shutting down.
+        }
     });
     async function refreshWidget(ctx) {
         const goals = await store.list();

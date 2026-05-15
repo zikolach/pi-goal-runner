@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { runSerializedSchedulerTick, splitCompletionPrefix } from "../src/extension.js";
+import { buildDaemonSuggestionMessage, runSerializedSchedulerTick, shouldSuggestDaemon, splitCompletionPrefix } from "../src/extension.js";
 
 test("extension completion tokenizer preserves trailing empty argument", () => {
   assert.deepEqual(splitCompletionPrefix("status "), ["status", ""]);
@@ -77,4 +77,23 @@ test("extension scheduler ticks are serialized", async () => {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(starts, 2);
   assert.deepEqual(errors, []);
+});
+
+test("daemon suggestion helper only recommends for non-terminal non-paused goals", () => {
+  assert.equal(shouldSuggestDaemon([]), false);
+  assert.equal(
+    shouldSuggestDaemon([
+      { schemaVersion: 1, id: "a", type: "github_pr_review", state: "completed", createdAt: "", updatedAt: "", summary: "", schedule: { nextCheckAt: "", backoff: { initialMs: 1, maxMs: 1, multiplier: 1, currentMs: 1 }, quietWindow: { durationMs: 1, onExpire: "completed" } }, runHistory: [], pendingDecisions: [] },
+      { schemaVersion: 1, id: "b", type: "github_pr_review", state: "paused", createdAt: "", updatedAt: "", summary: "", schedule: { nextCheckAt: "", backoff: { initialMs: 1, maxMs: 1, multiplier: 1, currentMs: 1 }, quietWindow: { durationMs: 1, onExpire: "completed" } }, runHistory: [], pendingDecisions: [] },
+    ]),
+    false,
+  );
+  assert.equal(
+    shouldSuggestDaemon([
+      { schemaVersion: 1, id: "c", type: "github_pr_review", state: "active", createdAt: "", updatedAt: "", summary: "", schedule: { nextCheckAt: "", backoff: { initialMs: 1, maxMs: 1, multiplier: 1, currentMs: 1 }, quietWindow: { durationMs: 1, onExpire: "completed" } }, runHistory: [], pendingDecisions: [] },
+    ]),
+    true,
+  );
+  assert.match(buildDaemonSuggestionMessage(2), /2 active goals/);
+  assert.match(buildDaemonSuggestionMessage(1), /1 active goal\)/);
 });

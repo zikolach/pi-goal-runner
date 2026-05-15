@@ -2,6 +2,7 @@ import { createGoalStore } from "./state/store.js";
 import { GOAL_SUBCOMMANDS, handleGoalCommand } from "./commands.js";
 import { schedulerTick } from "./scheduler.js";
 import { parseDaemonInterval } from "./cli.js";
+import type { GoalRecord } from "./types.js";
 
 interface ExtensionAPI {
   registerCommand(name: string, options: { description?: string; handler(args: string, ctx: ExtensionCommandContext): Promise<void> | void; getArgumentCompletions?(prefix: string): unknown[] | null | Promise<unknown[] | null> }): void;
@@ -46,6 +47,16 @@ export function splitCompletionPrefix(prefix: string): string[] {
   const parts = trimmed.split(/\s+/);
   if (trimmed.length > 0 && /\s$/.test(prefix) && parts.at(-1) !== "") return [...parts, ""];
   return parts;
+}
+
+const TERMINAL_GOAL_STATES = new Set<GoalRecord["state"]>(["completed", "cancelled", "dormant"]);
+
+export function shouldSuggestDaemon(goals: GoalRecord[]): boolean {
+  return goals.some((goal) => !TERMINAL_GOAL_STATES.has(goal.state) && goal.state !== "paused");
+}
+
+export function buildDaemonSuggestionMessage(activeCount: number): string {
+  return `Goal runner extension stops when the session exits (${activeCount} active goal${activeCount === 1 ? "" : "s"}). Run \`pi-goal-runner daemon\` to keep checking in background.`;
 }
 
 export default function goalRunnerExtension(pi: ExtensionAPI): void {
@@ -107,9 +118,16 @@ export default function goalRunnerExtension(pi: ExtensionAPI): void {
     }
   });
 
-  pi.on?.("session_shutdown", () => {
+  pi.on?.("session_shutdown", async (_event, ctx) => {
     if (timer) clearInterval(timer);
     timer = undefined;
+    try {
+      const goals = await store.list();
+      const active = goals.filter((goal) => !TERMINAL_GOAL_STATES.has(goal.state) && goal.state !== "paused");
+      if (active.length > 0) ctx.ui.notify(buildDaemonSuggestionMessage(active.length), "info");
+    } catch {
+      // Best effort only; session is shutting down.
+    }
   });
 
   async function refreshWidget(ctx: ExtensionContext): Promise<void> {
