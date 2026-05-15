@@ -28,19 +28,53 @@ interface ConfirmMessage {
 }
 
 function normalizeKey(data: string): string {
-  const trimmed = data.trim();
+  const raw = String(data);
+  const trimmed = raw.trim();
   const lower = trimmed.toLowerCase();
 
-  if (data === "\u001b[A" || lower === "up") return "up";
-  if (data === "\u001b[B" || lower === "down") return "down";
-  if (trimmed.length === 1 && trimmed.charCodeAt(0) === 27) return "escape";
-  if (trimmed === "\u001b" || lower === "escape" || lower === "esc") return "escape";
-  if (data === "\r" || data === "\n" || lower === "enter") return "enter";
-  if (lower === "ctrl+c") return "ctrl+c";
+  if (raw === "\r" || raw === "\n" || lower === "enter" || lower === "return") {
+    return "enter";
+  }
 
-  if (trimmed === "") return "unknown";
+  if (lower === "ctrl+c" || lower === "control+c" || lower === "ctrlc" || lower === "\u0003") {
+    return "ctrl+c";
+  }
+
+  if (lower === "up") {
+    return "up";
+  }
+  if (lower === "down") {
+    return "down";
+  }
+
+  if (
+    trimmed === "\u001b" ||
+    (trimmed.length === 1 && trimmed.charCodeAt(0) === 27) ||
+    lower === "escape" ||
+    lower === "esc" ||
+    (trimmed.includes("\u001b") && lower.length === 0)
+  ) {
+    return "escape";
+  }
+
+  if (raw.startsWith("\u001b[")) {
+    if (raw.endsWith("A") || raw.endsWith("a") || raw.endsWith("H") || raw.endsWith("h")) return "up";
+    if (raw.endsWith("B") || raw.endsWith("b") || raw.endsWith("P") || raw.endsWith("p")) return "down";
+    return "escape";
+  }
+
+  if (raw.startsWith("\u001bO")) {
+    if (raw.endsWith("A") || raw.endsWith("a")) return "up";
+    if (raw.endsWith("B") || raw.endsWith("b")) return "down";
+    return "escape";
+  }
+
+  if (trimmed === "") {
+    return "unknown";
+  }
   return lower;
 }
+
 
 function truncateLine(value: string, width: number): string {
   if (width <= 0) return "";
@@ -87,7 +121,7 @@ function wrapCell(value: string, width: number): string[] {
   return lines;
 }
 
-function renderRows(headers: string[], rows: string[][], width: number, shrinkOrder: number[] = []): string[] {
+function renderRows(headers: string[], rows: string[][], width: number, shrinkOrder: number[] = [], wrap = false): string[] {
   if (!headers.length) return [];
   const columnCount = headers.length;
   const separatorWidth = Math.max(0, columnCount - 1) * 3;
@@ -142,11 +176,16 @@ function renderRows(headers: string[], rows: string[][], width: number, shrinkOr
 
   const body: string[] = [];
   for (const row of rows) {
-    const chunks = row.map((cell, index) => wrapCell(cell ?? "", columns[index] ?? 1));
-    const rowHeight = Math.max(...chunks.map((chunk) => chunk.length));
-    for (let line = 0; line < rowHeight; line++) {
-      const lineCells = row.map((_, index) => chunks[index]?.at(line) ?? "");
-      body.push(renderRow(lineCells));
+    if (wrap) {
+      const chunks = row.map((cell, index) => wrapCell(cell ?? "", columns[index] ?? 1));
+      const rowHeight = Math.max(...chunks.map((chunk) => chunk.length));
+      for (let line = 0; line < rowHeight; line++) {
+        const lineCells = row.map((_, index) => chunks[index]?.at(line) ?? "");
+        body.push(renderRow(lineCells));
+      }
+    } else {
+      const line = row.map((cell, index) => truncateLine(cell ?? "", columns[index] ?? 1));
+      body.push(renderRow(line));
     }
   }
 
@@ -366,7 +405,7 @@ export class GoalManagerDialog implements GoalManagerComponent {
     });
 
     lines.push("");
-    lines.push(...renderRows(headers, rows, width, [5, 4, 3, 2, 1, 0]));
+    lines.push(...renderRows(headers, rows, width, [5, 4, 3, 2, 1, 0], false));
     lines.push("", truncateLine("↑/↓:move  enter:detail  r:refresh  q/esc:close", width));
     return lines;
   }
@@ -390,7 +429,7 @@ export class GoalManagerDialog implements GoalManagerComponent {
       ["Actions", hints.length ? hints.join(",") : "(none)"],
     ];
 
-    lines.push(...renderRows(["Property", "Value"], table, width, [1, 0]));
+    lines.push(...renderRows(["Property", "Value"], table, width, [1, 0], true));
     lines.push("");
     lines.push(truncateLine("b/esc back  r refresh  p:pause/resume  c:cancel  n:run now", width));
     return lines;

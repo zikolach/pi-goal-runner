@@ -135,8 +135,12 @@ test("goal manager wraps long table cells instead of only ellipsizing", () => {
   );
 
   const lines = dialog.render(60);
+  assert.equal(lines.some((line) => line.includes("Summary") || line.includes("Target") || line.includes("Actions")), true);
+
+  dialog.handleInput("enter");
+  const detailLines = dialog.render(60);
   const bodyLines = lines.slice(3);
-  const wrappedLines = bodyLines.filter((line) => /\|/.test(line) && !/Sel \| ID/.test(line) && !/─┼─/.test(line));
+  const wrappedLines = detailLines.slice(3).filter((line) => /\|/.test(line) && !/Property \| Value/.test(line) && !/─┼─/.test(line));
   assert.equal(wrappedLines.length >= 4, true);
 });
 
