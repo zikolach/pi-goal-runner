@@ -25,7 +25,7 @@ export const githubPrAdapter = {
         }), { updatedAt: context.now.toISOString() });
     },
     async prepareWorker(goal, observation, actionability, context) {
-        const worktreeGoal = await ensureGoalWorktree(context.store, goal, { updatedAt: context.now.toISOString() });
+        const worktreeGoal = await ensureGoalWorktree(context.store, goal, { updatedAt: context.now.toISOString(), observedHeadSha: observation.headSha });
         return {
             goal: worktreeGoal,
             prompt: buildWorkerPrompt(worktreeGoal, observation, actionability),
@@ -84,6 +84,8 @@ function githubPrDisplay(goal) {
             { label: "Repository", value: repo },
             { label: "PR", value: String(goal.github.prNumber) },
             ...(goal.github.repository.branch ? [{ label: "Branch", value: goal.github.repository.branch }] : []),
+            ...(goal.github.repository.worktreeMode ? [{ label: "Worktree mode", value: goal.github.repository.worktreeMode }] : []),
+            ...(goal.github.repository.pushBranch ? [{ label: "Push target", value: `${goal.github.repository.pushRemote ?? "origin"} HEAD:${goal.github.repository.pushBranch}` }] : []),
         ],
     };
 }

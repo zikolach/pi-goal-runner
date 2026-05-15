@@ -18,6 +18,7 @@ export interface SchedulePolicy {
     maxAttempts?: number;
     checkIntervalMs?: number;
 }
+export type WorktreeMode = "isolated" | "same_path";
 export interface RepositoryRef {
     owner: string;
     repo: string;
@@ -26,6 +27,10 @@ export interface RepositoryRef {
     branch?: string;
     baseBranch?: string;
     worktreePath?: string;
+    worktreeMode?: WorktreeMode;
+    worktreeHeadSha?: string;
+    pushRemote?: string;
+    pushBranch?: string;
 }
 export interface GithubPrGoalConfig {
     repository: RepositoryRef;

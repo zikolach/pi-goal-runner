@@ -2,39 +2,107 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { readdir, rm, stat } from "node:fs/promises";
 import { promisify } from "node:util";
-import type { GoalRecord } from "../types.js";
+import type { GoalRecord, RepositoryRef, WorktreeMode } from "../types.js";
 import type { GoalStore } from "../state/store.js";
 import type { StatePaths } from "../state/paths.js";
 import { redactText } from "../redaction.js";
 import { ensureDir } from "../state/json.js";
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_PUSH_REMOTE = "origin";
 
-export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord, options: { updatedAt?: string } = {}): Promise<GoalRecord> {
+export interface EnsureGoalWorktreeOptions {
+  updatedAt?: string;
+  observedHeadSha?: string;
+}
+
+export interface CreateWorktreeOptions {
+  branch?: string;
+  observedHeadSha?: string;
+  remote?: string;
+}
+
+interface ResolveRevisionOptions {
+  allowFetch: boolean;
+}
+
+export interface PreparedWorktree {
+  path: string;
+  mode: WorktreeMode;
+  headSha?: string;
+  pushRemote: string;
+  pushBranch?: string;
+}
+
+export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord, options: EnsureGoalWorktreeOptions = {}): Promise<GoalRecord> {
   if (!goal.github) return goal;
+  const repoPath = goal.github.repository.localPath ?? goal.cwd;
+  if (!repoPath) throw new Error("Repository local path or cwd is required to create a worktree");
+
+  const explicitMode = goal.github.repository.worktreeMode;
+  if (explicitMode === "same_path") return ensureSamePathWorktree(store, goal, repoPath, options);
+
   const recordedWorktreePath = goal.github.repository.worktreePath;
   const expectedWorktreePath = store.paths.worktreeDir(goal.id);
   const worktreePath = recordedWorktreePath && isExpectedWorktreePath(expectedWorktreePath, recordedWorktreePath) ? recordedWorktreePath : expectedWorktreePath;
-  const branch = goal.github.repository.branch;
-  const repoPath = goal.github.repository.localPath ?? goal.cwd;
-  if (!repoPath) throw new Error("Repository local path or cwd is required to create a worktree");
-  await createOrReuseWorktree(store.paths, repoPath, worktreePath, branch);
-  if (recordedWorktreePath === worktreePath) return goal;
+  const prepared = await createOrReuseWorktree(store.paths, repoPath, worktreePath, {
+    branch: goal.github.repository.branch,
+    observedHeadSha: options.observedHeadSha,
+    remote: goal.github.repository.pushRemote ?? DEFAULT_PUSH_REMOTE,
+  });
+  const nextRepository = {
+    ...goal.github.repository,
+    worktreePath,
+    worktreeMode: "isolated" as const,
+    worktreeHeadSha: prepared.headSha ?? options.observedHeadSha ?? goal.github.repository.worktreeHeadSha,
+    pushRemote: prepared.pushRemote,
+    pushBranch: goal.github.repository.branch,
+  };
+  if (repositoriesMatch(goal.github.repository, nextRepository)) return goal;
   return store.update(
     goal.id,
     (current) => ({
       ...current,
-      github: current.github ? { ...current.github, repository: { ...current.github.repository, worktreePath } } : current.github,
+      github: current.github ? { ...current.github, repository: { ...current.github.repository, ...nextRepository } } : current.github,
     }),
     options.updatedAt ? { updatedAt: options.updatedAt } : undefined,
   );
+}
+
+async function ensureSamePathWorktree(store: GoalStore, goal: GoalRecord, repoPath: string, options: EnsureGoalWorktreeOptions): Promise<GoalRecord> {
+  if (!goal.github) return goal;
+  const headSha = await resolveCommitish(repoPath, "HEAD").catch(() => options.observedHeadSha);
+  const nextRepository = {
+    ...goal.github.repository,
+    worktreePath: repoPath,
+    worktreeMode: "same_path" as const,
+    worktreeHeadSha: headSha ?? goal.github.repository.worktreeHeadSha,
+    pushRemote: goal.github.repository.pushRemote ?? DEFAULT_PUSH_REMOTE,
+    pushBranch: goal.github.repository.branch,
+  };
+  if (repositoriesMatch(goal.github.repository, nextRepository)) return goal;
+  return store.update(
+    goal.id,
+    (current) => ({
+      ...current,
+      github: current.github ? { ...current.github, repository: { ...current.github.repository, ...nextRepository } } : current.github,
+    }),
+    options.updatedAt ? { updatedAt: options.updatedAt } : undefined,
+  );
+}
+
+function repositoriesMatch(left: RepositoryRef, right: RepositoryRef): boolean {
+  const fields: Array<keyof RepositoryRef> = ["owner", "repo", "url", "localPath", "branch", "baseBranch", "worktreePath", "worktreeMode", "worktreeHeadSha", "pushRemote", "pushBranch"];
+  return fields.every((field) => left[field] === right[field]);
 }
 
 function isExpectedWorktreePath(expectedWorktreePath: string, worktreePath: string): boolean {
   return path.resolve(worktreePath) === path.resolve(expectedWorktreePath);
 }
 
-export async function createOrReuseWorktree(paths: StatePaths, repoPath: string, worktreePath: string, branch?: string): Promise<void> {
+export async function createOrReuseWorktree(paths: StatePaths, repoPath: string, worktreePath: string, branchOrOptions: string | CreateWorktreeOptions = {}): Promise<PreparedWorktree> {
+  const options = typeof branchOrOptions === "string" ? { branch: branchOrOptions } : branchOrOptions;
+  const pushRemote = options.remote ?? DEFAULT_PUSH_REMOTE;
   await ensureDir(paths.worktreesDir);
   let reusableWorktree = false;
   try {
@@ -44,43 +112,74 @@ export async function createOrReuseWorktree(paths: StatePaths, repoPath: string,
     reusableWorktree = false;
   }
   if (reusableWorktree) {
-    if (branch) await updateExistingWorktree(worktreePath, branch);
-    return;
+    const headSha = await updateExistingWorktree(worktreePath, options);
+    return { path: worktreePath, mode: "isolated", headSha, pushRemote, pushBranch: options.branch };
   }
   await prepareWorktreePath(worktreePath);
-  const args = ["-C", repoPath, "worktree", "add", worktreePath];
-  if (branch) args.push("--", branch);
   try {
-    await execFileAsync("git", args, { maxBuffer: 10 * 1024 * 1024 });
+    const revision = await resolveCheckoutRevision(repoPath, options, { allowFetch: true });
+    await execFileAsync("git", ["-C", repoPath, "worktree", "add", "--detach", worktreePath, "--", revision], { maxBuffer: 10 * 1024 * 1024 });
+    const headSha = await resolveCommitish(worktreePath, "HEAD").catch(() => undefined);
+    return { path: worktreePath, mode: "isolated", headSha, pushRemote, pushBranch: options.branch };
   } catch (error) {
-    const err = error as NodeJS.ErrnoException & { stderr?: string; stdout?: string };
-    throw new Error(`Could not create worktree: ${redactText(err.stderr || err.stdout || err.message, 1_000)}`);
+    throw new Error(`Could not create isolated worktree: ${formatGitError(error)}`);
   }
 }
 
-async function updateExistingWorktree(worktreePath: string, branch: string): Promise<void> {
+async function updateExistingWorktree(worktreePath: string, options: CreateWorktreeOptions): Promise<string | undefined> {
   try {
-    await execFileAsync("git", ["-C", worktreePath, "fetch", "--all", "--prune"], { maxBuffer: 10 * 1024 * 1024 });
-    const remoteCommit = await resolveRemoteBranchCommit(worktreePath, branch);
-    try {
-      await execFileAsync("git", ["-C", worktreePath, "switch", "--", branch], { maxBuffer: 10 * 1024 * 1024 });
-    } catch (switchError) {
-      if (!remoteCommit) throw switchError;
-      await execFileAsync("git", ["-C", worktreePath, "switch", `--create=${branch}`, "--track", `origin/${branch}`], { maxBuffer: 10 * 1024 * 1024 });
-    }
-    if (remoteCommit) await execFileAsync("git", ["-C", worktreePath, "reset", "--hard", remoteCommit], { maxBuffer: 10 * 1024 * 1024 });
+    await assertWorktreeClean(worktreePath);
+    const revision = await resolveCheckoutRevision(worktreePath, options, { allowFetch: true });
+    await execFileAsync("git", ["-C", worktreePath, "checkout", "--detach", revision], { maxBuffer: 10 * 1024 * 1024 });
+    await execFileAsync("git", ["-C", worktreePath, "reset", "--hard", revision], { maxBuffer: 10 * 1024 * 1024 });
+    return resolveCommitish(worktreePath, "HEAD").catch(() => undefined);
   } catch (error) {
-    throw new Error(`Could not update existing worktree: ${formatGitError(error)}`);
+    throw new Error(`Could not refresh isolated worktree: ${formatGitError(error)}`);
   }
 }
 
-async function resolveRemoteBranchCommit(worktreePath: string, branch: string): Promise<string | undefined> {
+async function fetchRepositoryIfConfigured(repoPath: string, remote: string): Promise<void> {
+  if (!await hasConfiguredRemote(repoPath, remote)) return;
+  await execFileAsync("git", ["-C", repoPath, "fetch", "--prune", remote], { maxBuffer: 10 * 1024 * 1024 });
+}
+
+async function hasConfiguredRemote(repoPath: string, remote: string): Promise<boolean> {
   try {
-    const { stdout } = await execFileAsync("git", ["-C", worktreePath, "rev-parse", "--verify", `refs/remotes/origin/${branch}^{commit}`], { maxBuffer: 10 * 1024 * 1024 });
-    return stdout.trim() || undefined;
+    await execFileAsync("git", ["-C", repoPath, "remote", "get-url", remote], { maxBuffer: 1024 * 1024 });
+    return true;
   } catch {
-    return undefined;
+    return false;
   }
+}
+
+async function assertWorktreeClean(worktreePath: string): Promise<void> {
+  const { stdout } = await execFileAsync("git", ["-C", worktreePath, "status", "--porcelain=v1", "--untracked-files=all"], { maxBuffer: 10 * 1024 * 1024 });
+  if (stdout.trim()) throw new Error(`isolated worktree has uncommitted or untracked changes; inspect or clean ${worktreePath} before retrying`);
+}
+
+async function resolveCheckoutRevision(repoPath: string, options: CreateWorktreeOptions, resolveOptions: ResolveRevisionOptions): Promise<string> {
+  const remote = options.remote ?? DEFAULT_PUSH_REMOTE;
+  if (options.observedHeadSha) {
+    const observed = await resolveCommitish(repoPath, options.observedHeadSha).catch(() => undefined);
+    if (observed) return observed;
+    if (resolveOptions.allowFetch) {
+      await fetchRepositoryIfConfigured(repoPath, remote);
+      const fetchedObserved = await resolveCommitish(repoPath, options.observedHeadSha).catch(() => undefined);
+      if (fetchedObserved) return fetchedObserved;
+    }
+  }
+  if (options.branch) {
+    if (resolveOptions.allowFetch) await fetchRepositoryIfConfigured(repoPath, remote);
+    const remoteBranch = await resolveCommitish(repoPath, `refs/remotes/${remote}/${options.branch}`).catch(() => undefined);
+    if (remoteBranch) return remoteBranch;
+    return resolveCommitish(repoPath, options.branch);
+  }
+  return resolveCommitish(repoPath, "HEAD");
+}
+
+async function resolveCommitish(repoPath: string, ref: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", repoPath, "rev-parse", "--verify", "--end-of-options", `${ref}^{commit}`], { maxBuffer: 10 * 1024 * 1024 });
+  return stdout.trim();
 }
 
 function formatGitError(error: unknown): string {
