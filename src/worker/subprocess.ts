@@ -24,6 +24,7 @@ export interface StartedWorkerRun {
 
 export const DEFAULT_WORKER_TIMEOUT_MS = 45 * 60_000;
 export const MAX_WORKER_STDOUT_BUFFER_CHARS = 64 * 1024;
+const MAX_LATE_PROCESS_DIAGNOSTIC_CHARS = 2_000;
 
 export async function launchWorker(store: GoalStore, goal: GoalRecord, prompt: string, options: WorkerLaunchOptions = {}): Promise<GoalRecord> {
   const run = await startWorker(store, goal, prompt, options);
@@ -178,6 +179,19 @@ export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: st
         if (terminalEventType) {
           // Worker protocol terminal events are authoritative; process exit status
           // must not override a recorded completion, failure, or user decision.
+          if (timedOut || code !== 0) {
+            try {
+              await appendGoalEvent(store.paths, {
+                type: "diagnostic",
+                goalId: goal.id,
+                runId,
+                timestamp: new Date().toISOString(),
+                message: buildLateProcessDiagnostic(terminalEventType, timedOut, code, signal, stderr),
+              });
+            } catch {
+              // Nonfatal: preserve the authoritative terminal run outcome.
+            }
+          }
         } else if (timedOut) {
           const event: FailureEvent = { type: "failure", goalId: goal.id, runId, timestamp: new Date().toISOString(), message: "Worker timed out", retryable: true };
           await enqueueEvent(event, "timeout");
@@ -197,6 +211,16 @@ export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: st
     });
   });
   return { runId, done };
+}
+
+function buildLateProcessDiagnostic(terminalEventType: "complete" | "failure" | "decision", timedOut: boolean, code: number | null, signal: NodeJS.Signals | null, stderr: string): string {
+  if (timedOut) {
+    const suffix = stderr.trim() ? `; stderr: ${redactText(stderr, MAX_LATE_PROCESS_DIAGNOSTIC_CHARS)}` : "";
+    return redactText(`Worker process timed out after terminal ${terminalEventType} event${suffix}`, MAX_LATE_PROCESS_DIAGNOSTIC_CHARS);
+  }
+  const exitReason = code === null ? `signal ${signal ?? "unknown"}` : `code ${code}`;
+  const stderrSuffix = stderr.trim() ? `; stderr: ${redactText(stderr, MAX_LATE_PROCESS_DIAGNOSTIC_CHARS)}` : "";
+  return redactText(`Worker process exited with ${exitReason} after terminal ${terminalEventType} event${stderrSuffix}`, MAX_LATE_PROCESS_DIAGNOSTIC_CHARS);
 }
 
 export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId: string, event: GoalEvent, forcedStatus?: RunSummary["status"]): Promise<void> {
