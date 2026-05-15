@@ -93,7 +93,7 @@ function isListableGoalRecord(goal: GoalRecord): boolean {
   return (
     goal.schemaVersion === 1 &&
     typeof goal.id === "string" &&
-    goal.type === "github_pr_review" &&
+    typeof goal.type === "string" &&
     typeof goal.state === "string" &&
     typeof goal.createdAt === "string" &&
     !Number.isNaN(Date.parse(goal.createdAt)) &&

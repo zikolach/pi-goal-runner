@@ -46,14 +46,14 @@ The package registers a `/goal` Pi command and a `pi-goal-runner` CLI after buil
 │ Scheduler                  │
 │ when to reconsider a goal  │
 └─────────────┬──────────────┘
-              │ context + prompt
+              │ adapter request
               ▼
 ┌────────────────────────────┐
 │ Goal adapter               │
 │ GitHub PR review today;    │
 │ more goal types later      │
 └─────────────┬──────────────┘
-              │ task prompt
+              │ worker inputs
               ▼
 ┌────────────────────────────┐
 │ AI worker subprocess       │
@@ -79,6 +79,8 @@ scheduler tick
   └─ reschedule with backoff, wait for a decision, or mark the goal quiet/complete
 ```
 
+The scheduler is intentionally adapter-driven internally. Core code owns durable lifecycle concerns such as due checks, locks, decisions, backoff, event persistence, notifications, and worker subprocess handling. Goal adapters own goal-type-specific behavior such as external observation, actionability, prompt construction, workspace preparation details, completion side effects, and display metadata. The only built-in adapter today is GitHub PR review; this package does not yet expose a public third-party plugin API.
+
 ### Current implementation map
 
 | Layer | Modules | Notes |
@@ -86,6 +88,7 @@ scheduler tick
 | Entrypoints | `src/extension.ts`, `src/cli.ts` | Pi `/goal` command, session timer, and `pi-goal-runner tick/daemon`. |
 | Durable state | `src/state/*` | One directory per goal under `~/.pi/agent/goals` by default, with atomic state writes, event logs, path validation, and locks. |
 | Scheduling policy | `src/scheduler.ts`, `src/policy.ts` | Due-goal selection, backoff, quiet windows, lock handling, and failure recovery. |
+| Goal adapters | `src/adapters/*`, `src/github/*` | Internal adapter boundary and first concrete adapter for GitHub PR review goals. |
 | Worker protocol | `src/worker/*` | Prompt construction, optional worktree setup, subprocess launch, bounded stdout ingestion, and JSONL event handling. |
 | Decisions | `src/decisions.ts` | Durable pending questions that can be answered later with `/goal answer`. |
 | Notifications | `src/notifications.ts` | Best-effort notifications that never determine core goal health. |

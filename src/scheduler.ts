@@ -1,17 +1,14 @@
-import type { ActionableObservation, CompleteEvent, GithubObservation, GoalRecord, SchedulerResult } from "./types.js";
+import type { CompleteEvent, GoalRecord, SchedulerResult } from "./types.js";
 import type { GoalStore } from "./state/store.js";
 import { appendGoalEvent } from "./state/events.js";
 import { acquireGoalLock } from "./state/lock.js";
 import { applyActionablePolicy, applyNoActionPolicy, increaseBackoff, isDue, isTerminal, nextCheckAt } from "./policy.js";
 import { createGhExecutor, type GhExecutor } from "./github/gh.js";
-import { appendRecentUnique, MAX_HANDLED_CHECK_NAMES } from "./github/handled.js";
-import { findActionable, observeGithubPr } from "./github/observe.js";
-import { replyAndResolveAddressedThreads } from "./github/update.js";
-import { buildWorkerPrompt } from "./worker/prompt.js";
-import { ensureGoalWorktree } from "./worker/worktree.js";
+import { getGoalAdapter } from "./adapters/registry.js";
 import { DEFAULT_WORKER_TIMEOUT_MS, startWorker, type WorkerLaunchOptions } from "./worker/subprocess.js";
 import { createDefaultNotificationSink, notifyNonFatal, type NotificationSink } from "./notifications.js";
 import { safeError } from "./redaction.js";
+import type { GoalActionability, PreparedWorkerInput } from "./adapters/types.js";
 
 export interface SchedulerOptions {
   gh?: GhExecutor;
@@ -129,20 +126,14 @@ function releaseLockAfterWorker(workerDone: Promise<GoalRecord>, release: () => 
 
 async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sink: NotificationSink, options: SchedulerOptions): Promise<CheckGoalResult> {
   const now = options.now ?? new Date();
-  if (goal.type !== "github_pr_review" || !goal.github) throw new Error(`Unsupported goal type: ${goal.type}`);
-  const observation: GithubObservation = await observeGithubPr(gh, goal.github, { now });
-  const actionable: ActionableObservation = findActionable(goal.github, observation);
-  await store.update(
-    goal.id,
-    (current) => ({
-      ...current,
-      updatedAt: now.toISOString(),
-      github: current.github ? { ...current.github, lastObservedAt: observation.observedAt, repository: { ...current.github.repository, branch: observation.headBranch ?? current.github.repository.branch } } : current.github,
-    }),
-    { updatedAt: now.toISOString() },
-  );
+  const adapter = getGoalAdapter(goal.type);
+  if (!adapter) throw new Error(`Unsupported goal type: ${goal.type}`);
+  const context = { store, gh, now };
+  const observation = await adapter.observe(goal, context);
+  const actionable: GoalActionability = await adapter.analyze(goal, observation, context);
+  await adapter.recordObservation?.(goal, observation, actionable, context);
   if (!actionable.actionable) {
-    const updated = applyNoActionPolicy(await store.get(goal.id), observation.observedAt, now);
+    const updated = applyNoActionPolicy(await store.get(goal.id), actionable.observedAt, now);
     await store.update(goal.id, () => updated, { updatedAt: now.toISOString() });
     if (updated.state === "completed" || updated.state === "dormant") {
       const event = { type: "complete" as const, goalId: goal.id, timestamp: now.toISOString(), status: "quiet" as const, summary: `Quiet window expired: ${actionable.reason}` };
@@ -152,11 +143,10 @@ async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sin
     return { launched: false };
   }
   const actionableGoal = await store.update(goal.id, (current) => applyActionablePolicy(current, now), { updatedAt: now.toISOString() });
-  const worktreeGoal = await ensureGoalWorktree(store, actionableGoal, { updatedAt: now.toISOString() });
-  const prompt = buildWorkerPrompt(worktreeGoal, observation, actionable);
+  const workerInput = await prepareWorkerInput(adapter, actionableGoal, observation, actionable, context);
   const event = { type: "progress" as const, goalId: goal.id, timestamp: now.toISOString(), message: `Launching worker: ${actionable.reason}` };
   await appendGoalEvent(store.paths, event);
-  await notifyNonFatal(store, sink, worktreeGoal, event);
+  await notifyNonFatal(store, sink, workerInput.goal, event);
   if (options.worker?.dryRun) {
     await store.update(goal.id, (current) => ({
       ...current,
@@ -166,41 +156,19 @@ async function checkGoal(store: GoalStore, goal: GoalRecord, gh: GhExecutor, sin
     }), { updatedAt: now.toISOString() });
     return { launched: true };
   }
-  const workerRun = await startWorker(store, worktreeGoal, prompt, {
+  const workerRun = await startWorker(store, workerInput.goal, workerInput.prompt, {
     ...options.worker,
-    onComplete: async (completeEvent) => handleSuccessfulWorkerComplete(store, gh, worktreeGoal, completeEvent, actionable.checks.map((check) => check.name)),
+    onComplete: async (completeEvent) => adapter.handleSuccessfulCompletion?.(workerInput.goal, completeEvent, context, workerInput.completionContext),
   });
   return { launched: true, workerDone: workerRun.done };
 }
 
+async function prepareWorkerInput(adapter: NonNullable<ReturnType<typeof getGoalAdapter>>, goal: GoalRecord, observation: unknown, actionable: GoalActionability, context: { store: GoalStore; gh: GhExecutor; now: Date }): Promise<PreparedWorkerInput> {
+  if (!adapter.prepareWorker) throw new Error(`Goal type ${goal.type} does not support worker execution`);
+  return adapter.prepareWorker(goal, observation, actionable, context);
+}
+
 export async function handleSuccessfulWorkerComplete(store: GoalStore, gh: GhExecutor, goal: GoalRecord, event: CompleteEvent, handledCheckNames: string[] = []): Promise<void> {
-  if (!goal.github) return;
-  if (handledCheckNames.length > 0) {
-    await store.update(goal.id, (current) => ({
-      ...current,
-      github: current.github ? { ...current.github, handledCheckNames: appendRecentUnique(current.github.handledCheckNames, handledCheckNames, MAX_HANDLED_CHECK_NAMES) } : current.github,
-    }), { updatedAt: event.timestamp });
-  }
-  if (!goal.github.autoReplyAndResolve) return;
-  try {
-    const resolvedThreadIds = await replyAndResolveAddressedThreads(gh, goal.github, event);
-    if (resolvedThreadIds.length > 0) {
-      await appendGoalEvent(store.paths, {
-        type: "diagnostic",
-        goalId: goal.id,
-        runId: event.runId,
-        timestamp: event.timestamp,
-        message: `Auto-replied and resolved ${resolvedThreadIds.length} GitHub review thread(s)`,
-      });
-    }
-  } catch (error) {
-    await appendGoalEvent(store.paths, {
-      type: "failure",
-      goalId: goal.id,
-      runId: event.runId,
-      timestamp: event.timestamp,
-      message: `Auto-reply/resolve failed: ${safeError(error)}`,
-      retryable: true,
-    });
-  }
+  const adapter = getGoalAdapter(goal.type);
+  await adapter?.handleSuccessfulCompletion?.(goal, event, { store, gh, now: new Date(event.timestamp) }, { handledCheckNames });
 }
