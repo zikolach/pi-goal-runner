@@ -29,50 +29,142 @@ interface ConfirmMessage {
 
 function normalizeKey(data: string): string {
   const raw = String(data);
-  const trimmed = raw.trim();
-  const lower = trimmed.toLowerCase();
+
+  const csiUMatch = raw.match(/^\x1b\[(\d+)(?::(\d*))?(?::(\d+))?(?:;(\d+))?(?::(\d+))?u$/);
+  if (csiUMatch) {
+    const codepoint = Number.parseInt(csiUMatch[1] ?? "", 10);
+    const modifier = Number.isFinite(Number.parseInt(csiUMatch[4] ?? "", 10)) ? Number.parseInt(csiUMatch[4] ?? "", 10) - 1 : 0;
+    const normalized = normalizeCodepointForName(codepoint);
+
+    if (normalized === 27) return "escape";
+    if (normalized === 13 || normalized === 10) return "enter";
+    if (normalized === 9) return "tab";
+    if (normalized === 8) return "backspace";
+    if (normalized === -1) return "up";
+    if (normalized === -2) return "down";
+    if (normalized === -3) return "right";
+    if (normalized === -4) return "left";
+
+    if (normalized >= 97 && normalized <= 122) {
+      const key = String.fromCodePoint(normalized);
+      if (modifier & 4) return `ctrl+${key}`;
+      if (modifier & 1) return key.toUpperCase();
+      return key;
+    }
+
+    if (normalized >= 48 && normalized <= 57) {
+      const key = String.fromCodePoint(normalized);
+      if (modifier & 4) return `ctrl+${key}`;
+      return key;
+    }
+  }
+
+  const arrowMatch = raw.match(/^\x1b\[1;(\d+)(?::(\d+))?([ABCD])$/);
+  if (arrowMatch) {
+    const key = arrowMatch[3];
+    if (key === "A") return "up";
+    if (key === "B") return "down";
+    if (key === "C") return "right";
+    if (key === "D") return "left";
+  }
+
+  const codepointMatch = raw.match(/^\x1b\[27;(\d+);(\d+)~$/);
+  if (codepointMatch) {
+    const codepoint = Number.parseInt(codepointMatch[2] ?? "", 10);
+    const modifier = Number.parseInt(codepointMatch[1] ?? "", 10) - 1;
+    if (codepoint === 27) return "escape";
+    if (codepoint === 99 && (modifier & 4)) return "ctrl+c";
+  }
+
+  const normalized = raw.trim();
+  const lower = normalized.toLowerCase();
 
   if (raw === "\r" || raw === "\n" || lower === "enter" || lower === "return") {
     return "enter";
   }
 
-  if (lower === "ctrl+c" || lower === "control+c" || lower === "ctrlc" || lower === "\u0003") {
+  if (raw === "\u0003" || lower === "ctrl+c" || lower === "control+c" || lower === "ctrlc") {
     return "ctrl+c";
   }
 
-  if (lower === "up") {
-    return "up";
-  }
-  if (lower === "down") {
-    return "down";
+  if (lower === "up" || lower === "down") {
+    return lower;
   }
 
-  if (
-    trimmed === "\u001b" ||
-    (trimmed.length === 1 && trimmed.charCodeAt(0) === 27) ||
-    lower === "escape" ||
-    lower === "esc" ||
-    (trimmed.includes("\u001b") && lower.length === 0)
-  ) {
+  if (lower === "escape" || lower === "esc" || normalized === "\x1b" || (normalized.length === 1 && normalized.charCodeAt(0) === 27)) {
     return "escape";
   }
 
-  if (raw.startsWith("\u001b[")) {
-    if (raw.endsWith("A") || raw.endsWith("a") || raw.endsWith("H") || raw.endsWith("h")) return "up";
-    if (raw.endsWith("B") || raw.endsWith("b") || raw.endsWith("P") || raw.endsWith("p")) return "down";
+  if (raw.length === 2 && raw.charCodeAt(0) === 27 && raw.charCodeAt(1) >= 1 && raw.charCodeAt(1) <= 26) {
+    const lowerCode = String.fromCharCode((raw.charCodeAt(1) ?? 0) + 96);
+    return `ctrl+${lowerCode}`;
+  }
+
+  const directLegacy = {
+    "\x1b": "escape",
+    "\x1b[A": "up",
+    "\x1bOA": "up",
+    "\x1b[B": "down",
+    "\x1bOB": "down",
+    "\x1b[C": "right",
+    "\x1bOC": "right",
+    "\x1b[D": "left",
+    "\x1bOD": "left",
+    "\x1b[H": "home",
+    "\x1bOH": "home",
+    "\x1b[F": "end",
+    "\x1bOF": "end",
+    "\x1b[2~": "insert",
+    "\x1b[3~": "delete",
+    "\x1b[5~": "pageup",
+    "\x1b[6~": "pagedown",
+  }[raw];
+  if (directLegacy) {
+    return directLegacy;
+  }
+
+  if (raw.startsWith("\x1b")) {
     return "escape";
   }
 
-  if (raw.startsWith("\u001bO")) {
-    if (raw.endsWith("A") || raw.endsWith("a")) return "up";
-    if (raw.endsWith("B") || raw.endsWith("b")) return "down";
-    return "escape";
-  }
-
-  if (trimmed === "") {
+  if (normalized === "") {
     return "unknown";
   }
   return lower;
+}
+
+function normalizeCodepointForName(codepoint: number): number {
+  const kittyEquivalent: Record<number, number> = {
+    57399: 48,
+    57400: 49,
+    57401: 50,
+    57402: 51,
+    57403: 52,
+    57404: 53,
+    57405: 54,
+    57406: 55,
+    57407: 56,
+    57408: 57,
+    57409: 46,
+    57410: 47,
+    57411: 42,
+    57412: 45,
+    57413: 43,
+    57415: 61,
+    57416: 44,
+    57417: -4,
+    57418: -3,
+    57419: -1,
+    57420: -2,
+    57421: -12,
+    57422: -13,
+    57423: -14,
+    57424: -15,
+    57425: -11,
+    57426: -10,
+  };
+
+  return kittyEquivalent[codepoint] ?? codepoint;
 }
 
 
@@ -193,7 +285,7 @@ function renderRows(headers: string[], rows: string[][], width: number, shrinkOr
     headerLine,
     dividerLine,
     ...body,
-  ].map((line) => truncateLine(line, contentWidth));
+  ].map((line) => truncateLine(line, width));
 }
 
 function toDialogLines(lines: string[], width: number): string[] {

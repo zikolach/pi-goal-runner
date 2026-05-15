@@ -99,13 +99,19 @@ test("goal manager recognizes escape input variants as back/close", () => {
   dialog.handleInput("\u001b");
   assert.equal(closed, 1);
 
+  const dialogKitty = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {
+    closed += 1;
+  });
+  dialogKitty.handleInput("\u001b[27;1u");
+  assert.equal(closed, 2);
+
   const dialogAlt = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {
     closed += 1;
   });
   dialogAlt.handleInput("Esc");
   dialogAlt.handleInput("ctrl+c");
   dialogAlt.handleInput("escape");
-  assert.equal(closed, 4);
+  assert.equal(closed, 5);
 
   let detailClosed = 0;
   const dialogWithDetail = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {
