@@ -5,6 +5,7 @@ import { schedulerTick } from "./scheduler.js";
 import { redactText } from "./redaction.js";
 import { splitArgs } from "./args.js";
 import { withGoalLock } from "./state/lock.js";
+import { getGoalDisplayMetadata } from "./adapters/registry.js";
 export { splitArgs } from "./args.js";
 export const GOAL_SUBCOMMANDS = ["help", "list", "status", "pause", "resume", "cancel", "decisions", "answer", "watch-pr", "tick"];
 export async function handleGoalCommand(store, argsText, options = {}) {
@@ -66,6 +67,7 @@ export function formatGoalList(goals) {
     return goals.map((goal) => `${goal.id}\t${goal.state}\t${goal.type}\t${redactText(goal.summary, 120)}\tnext: ${goal.schedule.nextCheckAt}`).join("\n");
 }
 export function formatGoalStatus(goal) {
+    const display = getGoalDisplayMetadata(goal);
     return `Goal ${goal.id}
 Type: ${goal.type}
 State: ${goal.state}
@@ -74,7 +76,7 @@ Next check: ${goal.schedule.nextCheckAt}
 Latest progress: ${redactText(goal.latestProgress ?? "none", 300)}
 Last run: ${redactText(goal.lastRunSummary ?? goal.runHistory.at(-1)?.summary ?? "none", 300)}
 Pending decisions: ${goal.pendingDecisions.filter((decision) => decision.status === "pending").length}
-Worktree: ${goal.github?.repository.worktreePath ?? "none"}`;
+Worktree: ${display.workspace ?? "none"}`;
 }
 export function formatDecisions(decisions) {
     if (!decisions.length)

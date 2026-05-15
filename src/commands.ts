@@ -7,6 +7,7 @@ import { schedulerTick } from "./scheduler.js";
 import { redactText } from "./redaction.js";
 import { splitArgs } from "./args.js";
 import { withGoalLock } from "./state/lock.js";
+import { getGoalDisplayMetadata } from "./adapters/registry.js";
 
 export { splitArgs } from "./args.js";
 
@@ -70,6 +71,7 @@ export function formatGoalList(goals: GoalRecord[]): string {
 }
 
 export function formatGoalStatus(goal: GoalRecord): string {
+  const display = getGoalDisplayMetadata(goal);
   return `Goal ${goal.id}
 Type: ${goal.type}
 State: ${goal.state}
@@ -78,7 +80,7 @@ Next check: ${goal.schedule.nextCheckAt}
 Latest progress: ${redactText(goal.latestProgress ?? "none", 300)}
 Last run: ${redactText(goal.lastRunSummary ?? goal.runHistory.at(-1)?.summary ?? "none", 300)}
 Pending decisions: ${goal.pendingDecisions.filter((decision) => decision.status === "pending").length}
-Worktree: ${goal.github?.repository.worktreePath ?? "none"}`;
+Worktree: ${display.workspace ?? "none"}`;
 }
 
 export function formatDecisions(decisions: ReturnType<typeof listPendingDecisions>): string {
