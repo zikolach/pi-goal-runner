@@ -29,7 +29,7 @@ export async function startWorker(store, goal, prompt, options = {}) {
         let stdoutOverflowed = false;
         let stderr = "";
         let timedOut = false;
-        let terminalEventType;
+        let authoritativeTerminalEventType;
         let settled = false;
         let ingestionQueue = Promise.resolve();
         const ingestionFailures = [];
@@ -58,9 +58,9 @@ export async function startWorker(store, goal, prompt, options = {}) {
             const emittedTerminalType = event.type === "complete" || event.type === "failure" || event.type === "decision" ? event.type : undefined;
             ingestionQueue = ingestionQueue.catch(() => undefined).then(async () => {
                 try {
-                    await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
-                    if (emittedTerminalType)
-                        terminalEventType = emittedTerminalType;
+                    const acceptedTerminalEvent = await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
+                    if (emittedTerminalType && acceptedTerminalEvent)
+                        authoritativeTerminalEventType = emittedTerminalType;
                     if (event.type === "complete" && event.status === "success")
                         await options.onComplete?.(event);
                 }
@@ -170,7 +170,7 @@ export async function startWorker(store, goal, prompt, options = {}) {
                 if (!stdoutOverflowed && stdoutBuffer.trim())
                     enqueueEvent(parseWorkerEventLine(goal.id, runId, normalizedStdoutBuffer()));
                 await ingestionQueue;
-                if (terminalEventType) {
+                if (authoritativeTerminalEventType) {
                     // Worker protocol terminal events are authoritative; process exit status
                     // must not override a recorded completion, failure, or user decision.
                     if (timedOut || code !== 0) {
@@ -180,7 +180,7 @@ export async function startWorker(store, goal, prompt, options = {}) {
                                 goalId: goal.id,
                                 runId,
                                 timestamp: new Date().toISOString(),
-                                message: buildLateProcessDiagnostic(terminalEventType, timedOut, code, signal, stderr),
+                                message: buildLateProcessDiagnostic(authoritativeTerminalEventType, timedOut, code, signal, stderr),
                             });
                         }
                         catch {
@@ -220,6 +220,7 @@ function buildLateProcessDiagnostic(terminalEventType, timedOut, code, signal, s
     return redactText(`Worker process exited with ${exitReason} after terminal ${terminalEventType} event${stderrSuffix}`, MAX_LATE_PROCESS_DIAGNOSTIC_CHARS);
 }
 export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatus) {
+    let acceptedTerminalEvent = false;
     await appendGoalEvent(store.paths, event);
     await store.update(goalId, (goal) => {
         if (event.type === "failure" && hasTerminalRun(goal, runId)) {
@@ -238,9 +239,12 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
         });
         if (event.type === "progress")
             return { ...goal, latestProgress: event.message, runHistory };
-        if (event.type === "decision")
+        if (event.type === "decision") {
+            acceptedTerminalEvent = true;
             return { ...addPendingDecision({ ...goal, runHistory }, event.decision), latestProgress: event.decision.prompt };
+        }
         if (event.type === "complete") {
+            acceptedTerminalEvent = true;
             if (event.status === "stale") {
                 const backoff = increaseBackoff(goal.schedule.backoff);
                 const staleAt = new Date(event.timestamp);
@@ -249,12 +253,14 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
             return { ...goal, state: event.status === "quiet" ? "completed" : "active", latestProgress: event.summary, lastRunSummary: event.summary, runHistory, github: updateGithubHandledState(goal, event) };
         }
         if (event.type === "failure") {
+            acceptedTerminalEvent = true;
             const backoff = increaseBackoff(goal.schedule.backoff);
             const failedAt = new Date(event.timestamp);
             return { ...goal, state: "failed", latestProgress: event.message, runHistory, schedule: { ...goal.schedule, backoff, nextCheckAt: nextCheckAt(backoff, failedAt) } };
         }
         return { ...goal, runHistory, latestProgress: event.message };
     });
+    return acceptedTerminalEvent;
 }
 function hasTerminalRun(goal, runId) {
     const run = goal.runHistory.find((candidate) => candidate.id === runId);

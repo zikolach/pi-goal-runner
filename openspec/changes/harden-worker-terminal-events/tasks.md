@@ -18,6 +18,8 @@
 - [x] 3.3 Add a test for emitted `failure` remaining authoritative after process close.
 - [x] 3.4 Add tests for non-zero exit, zero exit, and timeout without terminal events remaining failures.
 - [x] 3.5 Add a test for stale-context-like stderr after completion being recorded only as diagnostic.
+- [x] 3.6 Add tests for post-terminal diagnostic write failure and timeout after completion.
+- [x] 3.7 Add a test that late terminal-looking failures do not change the authoritative diagnostic type.
 
 ## 4. Validation
 

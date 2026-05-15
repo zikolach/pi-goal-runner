@@ -2,6 +2,7 @@ import { createGoalStore } from "./state/store.js";
 import { GOAL_SUBCOMMANDS, handleGoalCommand } from "./commands.js";
 import { schedulerTick } from "./scheduler.js";
 import { parseDaemonInterval } from "./cli.js";
+import { isTerminal } from "./policy.js";
 import type { GoalRecord } from "./types.js";
 
 interface ExtensionAPI {
@@ -49,14 +50,19 @@ export function splitCompletionPrefix(prefix: string): string[] {
   return parts;
 }
 
-const TERMINAL_GOAL_STATES = new Set<GoalRecord["state"]>(["completed", "cancelled", "dormant"]);
-
 export function shouldSuggestDaemon(goals: GoalRecord[]): boolean {
-  return goals.some((goal) => !TERMINAL_GOAL_STATES.has(goal.state) && goal.state !== "paused");
+  return goals.some(isDaemonEligibleGoal);
 }
 
 export function buildDaemonSuggestionMessage(activeCount: number): string {
   return `Goal runner extension stops when the session exits (${activeCount} active goal${activeCount === 1 ? "" : "s"}). Run \`pi-goal-runner daemon\` to keep checking in background.`;
+}
+
+function isDaemonEligibleGoal(goal: GoalRecord): boolean {
+  return !isTerminal(goal.state)
+    && goal.state !== "paused"
+    && goal.state !== "needs_decision"
+    && !goal.pendingDecisions.some((decision) => decision.status === "pending" && decision.required);
 }
 
 export default function goalRunnerExtension(pi: ExtensionAPI): void {
@@ -123,7 +129,7 @@ export default function goalRunnerExtension(pi: ExtensionAPI): void {
     timer = undefined;
     try {
       const goals = await store.list();
-      const active = goals.filter((goal) => !TERMINAL_GOAL_STATES.has(goal.state) && goal.state !== "paused");
+      const active = goals.filter(isDaemonEligibleGoal);
       if (active.length > 0) ctx.ui.notify(buildDaemonSuggestionMessage(active.length), "info");
     } catch {
       // Best effort only; session is shutting down.
@@ -132,7 +138,8 @@ export default function goalRunnerExtension(pi: ExtensionAPI): void {
 
   async function refreshWidget(ctx: ExtensionContext): Promise<void> {
     const goals = await store.list();
-    const active = goals.filter((goal) => !["completed", "cancelled", "dormant"].includes(goal.state)).length;
+    const active = goals.filter((goal) => !isTerminal(goal.state)).length;
+    const daemonEligible = goals.filter(isDaemonEligibleGoal).length;
     const decisions = goals.reduce((count, goal) => count + goal.pendingDecisions.filter((decision) => decision.status === "pending").length, 0);
     ctx.ui.setStatus?.("goals", active ? `goals:${active}${decisions ? ` decisions:${decisions}` : ""}` : undefined);
     if (!active) {
@@ -141,7 +148,7 @@ export default function goalRunnerExtension(pi: ExtensionAPI): void {
     }
     const lines: string[] = [];
     if (decisions) lines.push(`${decisions} goal decision(s) pending. Run /goal decisions.`);
-    lines.push("Tip: run `pi-goal-runner daemon` before exiting Pi to keep goal checks running in background.");
-    ctx.ui.setWidget?.("goals", lines);
+    if (daemonEligible > 0) lines.push("Tip: run `pi-goal-runner daemon` before exiting Pi to keep goal checks running in background.");
+    ctx.ui.setWidget?.("goals", lines.length ? lines : undefined);
   }
 }

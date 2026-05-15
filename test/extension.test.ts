@@ -79,12 +79,14 @@ test("extension scheduler ticks are serialized", async () => {
   assert.deepEqual(errors, []);
 });
 
-test("daemon suggestion helper only recommends for non-terminal non-paused goals", () => {
+test("daemon suggestion helper only recommends for goals the daemon can check", () => {
   assert.equal(shouldSuggestDaemon([]), false);
   assert.equal(
     shouldSuggestDaemon([
       { schemaVersion: 1, id: "a", type: "github_pr_review", state: "completed", createdAt: "", updatedAt: "", summary: "", schedule: { nextCheckAt: "", backoff: { initialMs: 1, maxMs: 1, multiplier: 1, currentMs: 1 }, quietWindow: { durationMs: 1, onExpire: "completed" } }, runHistory: [], pendingDecisions: [] },
       { schemaVersion: 1, id: "b", type: "github_pr_review", state: "paused", createdAt: "", updatedAt: "", summary: "", schedule: { nextCheckAt: "", backoff: { initialMs: 1, maxMs: 1, multiplier: 1, currentMs: 1 }, quietWindow: { durationMs: 1, onExpire: "completed" } }, runHistory: [], pendingDecisions: [] },
+      { schemaVersion: 1, id: "d", type: "github_pr_review", state: "needs_decision", createdAt: "", updatedAt: "", summary: "", schedule: { nextCheckAt: "", backoff: { initialMs: 1, maxMs: 1, multiplier: 1, currentMs: 1 }, quietWindow: { durationMs: 1, onExpire: "completed" } }, runHistory: [], pendingDecisions: [] },
+      { schemaVersion: 1, id: "e", type: "github_pr_review", state: "active", createdAt: "", updatedAt: "", summary: "", schedule: { nextCheckAt: "", backoff: { initialMs: 1, maxMs: 1, multiplier: 1, currentMs: 1 }, quietWindow: { durationMs: 1, onExpire: "completed" } }, runHistory: [], pendingDecisions: [{ id: "decision", goalId: "e", prompt: "?", options: [], createdAt: "", status: "pending", required: true }], },
     ]),
     false,
   );

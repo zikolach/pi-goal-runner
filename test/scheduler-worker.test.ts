@@ -563,8 +563,7 @@ test("worker decision terminal event is not overridden by non-zero exit", async 
       args: [
         "-e",
         [
-          "console.log(JSON.stringify({type:'decision', decision:{id:'d', prompt:'Pick', options:[{id:'x', label:'X'}]}}));",
-          "process.exit(7);",
+          "process.stdout.write(JSON.stringify({type:'decision', decision:{id:'d', prompt:'Pick', options:[{id:'x', label:'X'}]}}) + '\\n', () => process.exit(7));",
         ].join(""),
       ],
     });
@@ -585,7 +584,7 @@ test("worker complete terminal event is not overridden by non-zero exit and reco
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
     await launchWorker(t.store, goal, "", {
       command: process.execPath,
-      args: ["-e", "console.log(JSON.stringify({type:'complete', status:'success', summary:'done'})); process.exit(9);"] ,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => process.exit(9));"] ,
     });
     const updated = await t.store.get("g");
     assert.equal(updated.state, "active");
@@ -598,13 +597,85 @@ test("worker complete terminal event is not overridden by non-zero exit and reco
   }
 });
 
+test("late terminal-looking failure does not change authoritative diagnostic type", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "const events = [",
+          "{type:'complete', status:'success', summary:'done'},",
+          "{type:'failure', message:'late protocol failure', retryable:true},",
+          "];",
+          "process.stdout.write(events.map((event) => JSON.stringify(event)).join('\\n') + '\\n', () => process.exit(9));",
+        ].join(""),
+      ],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
+    assert.match(events, /Worker process exited with code 9 after terminal complete event/);
+    assert.doesNotMatch(events, /after terminal failure event/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker terminal outcome survives diagnostic write failure", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => process.exit(9));"] ,
+      onComplete: async () => {
+        const eventsFile = t.store.paths.eventsFile("g");
+        await rm(eventsFile, { force: true });
+        await mkdir(eventsFile, { recursive: true });
+      },
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    assert.equal(updated.lastRunSummary, "done");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker timeout after terminal event records only diagnostic", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => setInterval(() => {}, 1000));"],
+      timeoutMs: 500,
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    assert.equal(updated.lastRunSummary, "done");
+    const events = (await readFile(t.store.paths.eventsFile("g"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; runId?: string; message?: string });
+    const runEvents = events.filter((event) => event.runId === updated.runHistory.at(-1)?.id);
+    assert.equal(runEvents.some((event) => event.type === "failure"), false);
+    assert.equal(runEvents.some((event) => event.type === "diagnostic" && /timed out after terminal complete event/.test(event.message ?? "")), true);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("worker emitted failure remains authoritative when process exits zero", async () => {
   const t = await tempStore();
   try {
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
     await launchWorker(t.store, goal, "", {
       command: process.execPath,
-      args: ["-e", "console.log(JSON.stringify({type:'failure', message:'emitted failure', retryable:true})); process.exit(0);"] ,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'failure', message:'emitted failure', retryable:true}) + '\\n', () => process.exit(0));"] ,
     });
     const updated = await t.store.get("g");
     assert.equal(updated.state, "failed");
@@ -668,9 +739,10 @@ test("stale-context-like stderr after completion is recorded only as diagnostic"
       args: [
         "-e",
         [
-          "console.log(JSON.stringify({type:'complete', status:'success', summary:'done'}));",
+          "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => {",
           "process.stderr.write('Error: This extension ctx is stale after session replacement\\n');",
           "process.exit(1);",
+          "});",
         ].join(""),
       ],
     });

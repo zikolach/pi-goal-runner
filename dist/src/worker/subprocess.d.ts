@@ -16,4 +16,4 @@ export declare const DEFAULT_WORKER_TIMEOUT_MS: number;
 export declare const MAX_WORKER_STDOUT_BUFFER_CHARS: number;
 export declare function launchWorker(store: GoalStore, goal: GoalRecord, prompt: string, options?: WorkerLaunchOptions): Promise<GoalRecord>;
 export declare function startWorker(store: GoalStore, goal: GoalRecord, prompt: string, options?: WorkerLaunchOptions): Promise<StartedWorkerRun>;
-export declare function ingestWorkerEvent(store: GoalStore, goalId: string, runId: string, event: GoalEvent, forcedStatus?: RunSummary["status"]): Promise<void>;
+export declare function ingestWorkerEvent(store: GoalStore, goalId: string, runId: string, event: GoalEvent, forcedStatus?: RunSummary["status"]): Promise<boolean>;

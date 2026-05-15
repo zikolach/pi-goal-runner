@@ -7,7 +7,7 @@ The system SHALL treat the first successfully ingested terminal worker protocol 
 - **WHEN** a worker emits a valid `complete` event that is persisted successfully
 - **AND** the worker process later exits with a non-zero code
 - **THEN** the goal remains in the state produced by the `complete` event
-- **AND** the run remains recorded as successful, quiet, or stale according to that `complete` event
+- **AND** the run remains recorded using the existing `complete` mapping (`success` for successful/quiet completions, or `failed` for stale completions)
 
 #### Scenario: Decision followed by non-zero exit
 - **WHEN** a worker emits a valid `decision` event that is persisted successfully
