@@ -360,6 +360,24 @@ test("late worker failure does not override terminal success", async () => {
   }
 });
 
+test("late worker non-terminal events do not override terminal success", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done", commitSha: "abc1234" });
+    const afterComplete = await t.store.get("g");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await ingestWorkerEvent(t.store, "g", "r", { type: "progress", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:01Z", message: "late progress" });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    assert.equal(updated.latestProgress, "done");
+    assert.equal(updated.updatedAt, afterComplete.updatedAt);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("late worker terminal events do not override the first terminal outcome", async () => {
   const t = await tempStore();
   try {
@@ -779,7 +797,39 @@ test("worker timeout without terminal event remains failure", async () => {
 
 test("terminal event emitted after timeout does not override timeout", async () => {
   const t = await tempStore();
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const workerTimeoutMs = 60_000;
+  type CapturedTimeout = {
+    delay?: number;
+    cleared: boolean;
+    fire: () => void;
+    unref: () => CapturedTimeout;
+  };
+  const capturedWorkerTimeouts: CapturedTimeout[] = [];
   try {
+    globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      if (delay !== workerTimeoutMs) return realSetTimeout(callback, delay, ...args) as ReturnType<typeof globalThis.setTimeout>;
+      const handle: CapturedTimeout = {
+        delay,
+        cleared: false,
+        fire: () => {
+          if (!handle.cleared) callback(...args);
+        },
+        unref: () => handle,
+      };
+      capturedWorkerTimeouts.push(handle);
+      return handle as unknown as ReturnType<typeof globalThis.setTimeout>;
+    }) as unknown as typeof globalThis.setTimeout;
+    globalThis.clearTimeout = ((handle?: ReturnType<typeof globalThis.setTimeout>) => {
+      const captured = handle as unknown as CapturedTimeout | undefined;
+      if (captured && typeof captured === "object" && "cleared" in captured) {
+        captured.cleared = true;
+        return;
+      }
+      return realClearTimeout(handle as Parameters<typeof realClearTimeout>[0]);
+    }) as unknown as typeof globalThis.clearTimeout;
+
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
     const readyFile = path.join(t.store.paths.root, "worker-ready");
     const observedSignalFile = path.join(t.store.paths.root, "worker-sigterm-observed");
@@ -799,9 +849,11 @@ test("terminal event emitted after timeout does not override timeout", async () 
           "setInterval(() => {}, 1000);",
         ].join(""),
       ],
-      timeoutMs: 1_000,
+      timeoutMs: workerTimeoutMs,
     });
-    await waitForFile(readyFile, 900);
+    await waitForFile(readyFile, 5_000);
+    assert.equal(capturedWorkerTimeouts.length, 1);
+    capturedWorkerTimeouts[0]?.fire();
     const updated = await run.done;
     assert.equal(await readFile(observedSignalFile, "utf8"), "yes");
     assert.equal(updated.state, "failed");
@@ -809,6 +861,8 @@ test("terminal event emitted after timeout does not override timeout", async () 
     assert.match(updated.latestProgress ?? "", /Worker timed out/);
     assert.notEqual(updated.lastRunSummary, "late success");
   } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
     await t.cleanup();
   }
 });
