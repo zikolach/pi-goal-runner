@@ -91,13 +91,21 @@ test("goal manager renders empty list view with close hint", () => {
   assert.equal(lines[0].startsWith("╭") && lines[0].endsWith("╮"), true);
 });
 
-test("goal manager treats raw escape input as back/close", () => {
+test("goal manager recognizes escape input variants as back/close", () => {
   let closed = 0;
   const dialog = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {
     closed += 1;
   });
   dialog.handleInput("\u001b");
   assert.equal(closed, 1);
+
+  const dialogAlt = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {
+    closed += 1;
+  });
+  dialogAlt.handleInput("Esc");
+  dialogAlt.handleInput("ctrl+c");
+  dialogAlt.handleInput("escape");
+  assert.equal(closed, 4);
 
   let detailClosed = 0;
   const dialogWithDetail = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {
@@ -108,6 +116,28 @@ test("goal manager treats raw escape input as back/close", () => {
   const detailLines = dialogWithDetail.render(40);
   assert.equal(detailClosed, 0);
   assert.equal(detailLines.some((line) => line.includes("Goal manager")), true);
+});
+
+test("goal manager wraps long table cells instead of only ellipsizing", () => {
+  const longSummary = Array.from({ length: 40 }, (_, index) => `cell-${String(index).padStart(2, "0")}`).join(" ");
+  const dialog = new GoalManagerDialog(
+    [
+      makeGoal({
+        id: "very-long-goal-id-that-would-force-wrap-0001",
+        state: "active",
+        summary: longSummary,
+        pendingDecisions: [],
+      }),
+    ],
+    createCallbacks().callbacks,
+    () => {},
+    () => {},
+  );
+
+  const lines = dialog.render(60);
+  const bodyLines = lines.slice(3);
+  const wrappedLines = bodyLines.filter((line) => /\|/.test(line) && !/Sel \| ID/.test(line) && !/─┼─/.test(line));
+  assert.equal(wrappedLines.length >= 4, true);
 });
 
 test("goal manager supports empty-line width-safe rendering for long values", () => {

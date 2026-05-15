@@ -29,14 +29,17 @@ interface ConfirmMessage {
 
 function normalizeKey(data: string): string {
   const trimmed = data.trim();
-  if (data === "\u001b[A") return "up";
-  if (data === "\u001b[B") return "down";
-  if (data === "\u001b") return "escape";
-  if (trimmed === "esc" || trimmed === "escape") return "escape";
+  const lower = trimmed.toLowerCase();
+
+  if (data === "\u001b[A" || lower === "up") return "up";
+  if (data === "\u001b[B" || lower === "down") return "down";
   if (trimmed.length === 1 && trimmed.charCodeAt(0) === 27) return "escape";
-  if (data === "\r" || data === "\n" || trimmed.toLowerCase() === "enter") return "enter";
+  if (trimmed === "\u001b" || lower === "escape" || lower === "esc") return "escape";
+  if (data === "\r" || data === "\n" || lower === "enter") return "enter";
+  if (lower === "ctrl+c") return "ctrl+c";
+
   if (trimmed === "") return "unknown";
-  return trimmed.toLowerCase();
+  return lower;
 }
 
 function truncateLine(value: string, width: number): string {
@@ -68,6 +71,20 @@ function buildActionHints(goal: GoalRecord): string[] {
 function renderCell(value: string, width: number): string {
   const normalized = truncateLine(String(value), width);
   return normalized.padEnd(width, " ");
+}
+
+function wrapCell(value: string, width: number): string[] {
+  if (width <= 1) return [truncateLine(String(value), width)];
+  const normalized = String(value);
+  if (normalized.length === 0) return [""];
+  const lines: string[] = [];
+  let remaining = normalized;
+  while (remaining.length > width) {
+    lines.push(remaining.slice(0, width));
+    remaining = remaining.slice(width);
+  }
+  lines.push(remaining);
+  return lines;
 }
 
 function renderRows(headers: string[], rows: string[][], width: number, shrinkOrder: number[] = []): string[] {
@@ -120,10 +137,23 @@ function renderRows(headers: string[], rows: string[][], width: number, shrinkOr
       .join(" | ");
   };
 
+  const headerLine = renderRow(headers);
+  const dividerLine = columns.map((columnWidth) => "─".repeat(Math.max(1, columnWidth))).join("─┼─");
+
+  const body: string[] = [];
+  for (const row of rows) {
+    const chunks = row.map((cell, index) => wrapCell(cell ?? "", columns[index] ?? 1));
+    const rowHeight = Math.max(...chunks.map((chunk) => chunk.length));
+    for (let line = 0; line < rowHeight; line++) {
+      const lineCells = row.map((_, index) => chunks[index]?.at(line) ?? "");
+      body.push(renderRow(lineCells));
+    }
+  }
+
   return [
-    renderRow(headers),
-    columns.map((columnWidth) => "─".repeat(Math.max(1, columnWidth))).join("─┼─"),
-    ...rows.map((row) => renderRow(row)),
+    headerLine,
+    dividerLine,
+    ...body,
   ].map((line) => truncateLine(line, contentWidth));
 }
 
@@ -234,7 +264,7 @@ export class GoalManagerDialog implements GoalManagerComponent {
       void this.reloadGoals();
       return;
     }
-    if (key === "escape" || key === "q") {
+    if (key === "escape" || key === "q" || key === "ctrl+c") {
       this.done();
       return;
     }
@@ -249,7 +279,7 @@ export class GoalManagerDialog implements GoalManagerComponent {
     }
     const availability = getGoalActionAvailability(goal);
 
-    if (key === "escape" || key === "b") {
+    if (key === "escape" || key === "q" || key === "b" || key === "ctrl+c") {
       this.view = "list";
       this.requestRender();
       return;
