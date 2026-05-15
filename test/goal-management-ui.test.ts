@@ -150,6 +150,31 @@ test("goal manager wraps long table cells instead of only ellipsizing", () => {
   assert.equal(wrappedLines.length >= 4, true);
 });
 
+test("goal manager preserves multiline field text in wrapped detail rows", () => {
+  const dialog = new GoalManagerDialog(
+    [
+      makeGoal({
+        id: "goal-newline",
+        state: "active",
+        latestProgress: "Latest progress line one\nline two has detail\nline three has more details",
+      }),
+    ],
+    createCallbacks().callbacks,
+    () => {},
+    () => {},
+  );
+
+  dialog.handleInput("enter");
+  const lines = dialog.render(80);
+  const body = lines.join("\n");
+  assert.equal(body.includes("Latest progress line one"), true);
+  assert.equal(body.includes("line two has detail"), true);
+  assert.equal(body.includes("line three has more details"), true);
+
+  const hasRawNewlineInRow = lines.some((line) => line.includes("\n"));
+  assert.equal(hasRawNewlineInRow, false);
+});
+
 test("goal manager supports empty-line width-safe rendering for long values", () => {
   const goals = [
     makeGoal({
@@ -244,3 +269,15 @@ for (const [state, expected] of [
     assert.ok(actions.includes(expected), `${state} actions mismatch: ${actions}`);
   });
 }
+
+test("goal manager keeps list height stable after leaving detail view", () => {
+  const dialog = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {});
+  const listLines = dialog.render(80);
+  dialog.handleInput("enter");
+  const detailLines = dialog.render(80);
+  dialog.handleInput("b");
+  const backToListLines = dialog.render(80);
+
+  assert.equal(detailLines.length > listLines.length, true);
+  assert.equal(backToListLines.length, detailLines.length);
+});

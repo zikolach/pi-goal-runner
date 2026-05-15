@@ -34,6 +34,7 @@ export declare class GoalManagerDialog implements GoalManagerComponent {
     private view;
     private selectedIndex;
     private confirm?;
+    private detailLineCount;
     constructor(initialGoals: GoalRecord[], callbacks: GoalManagerCallbacks, requestRender: () => void, done: () => void);
     render(width: number): string[];
     handleInput(data: string): void;

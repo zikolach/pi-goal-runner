@@ -201,16 +201,25 @@ function renderCell(value: string, width: number): string {
 
 function wrapCell(value: string, width: number): string[] {
   if (width <= 1) return [truncateLine(String(value), width)];
-  const normalized = String(value);
-  if (normalized.length === 0) return [""];
+  const normalized = String(value).replace(/\r\n?/g, "\n");
+  const logicalLines = normalized.split("\n");
   const lines: string[] = [];
-  let remaining = normalized;
-  while (remaining.length > width) {
-    lines.push(remaining.slice(0, width));
-    remaining = remaining.slice(width);
+
+  for (const logicalLine of logicalLines) {
+    if (logicalLine.length === 0) {
+      lines.push("");
+      continue;
+    }
+
+    let remaining = logicalLine;
+    while (remaining.length > width) {
+      lines.push(remaining.slice(0, width));
+      remaining = remaining.slice(width);
+    }
+    lines.push(remaining);
   }
-  lines.push(remaining);
-  return lines;
+
+  return lines.length === 0 ? [""] : lines;
 }
 
 function renderRows(headers: string[], rows: string[][], width: number, shrinkOrder: number[] = [], wrap = false): string[] {
@@ -269,14 +278,19 @@ function renderRows(headers: string[], rows: string[][], width: number, shrinkOr
   const body: string[] = [];
   for (const row of rows) {
     if (wrap) {
-      const chunks = row.map((cell, index) => wrapCell(cell ?? "", columns[index] ?? 1));
+      const chunks = row.map((cell, index) => {
+        if (index === 0) {
+          return [truncateLine(cell ?? "", columns[index] ?? 1)];
+        }
+        return wrapCell(cell ?? "", columns[index] ?? 1);
+      });
       const rowHeight = Math.max(...chunks.map((chunk) => chunk.length));
       for (let line = 0; line < rowHeight; line++) {
         const lineCells = row.map((_, index) => chunks[index]?.at(line) ?? "");
         body.push(renderRow(lineCells));
       }
     } else {
-      const line = row.map((cell, index) => truncateLine(cell ?? "", columns[index] ?? 1));
+      const line = row.map((cell, index) => truncateLine((cell ?? "").replace(/\r?\n/g, " "), columns[index] ?? 1));
       body.push(renderRow(line));
     }
   }
@@ -304,6 +318,7 @@ export class GoalManagerDialog implements GoalManagerComponent {
   private view: GoalManagerView = "list";
   private selectedIndex = 0;
   private confirm?: ConfirmMessage;
+  private detailLineCount = 0;
 
   constructor(
     initialGoals: GoalRecord[],
@@ -328,8 +343,18 @@ export class GoalManagerDialog implements GoalManagerComponent {
     }
 
     const contentWidth = Math.max(1, width - 2);
-    if (this.view === "list") return toDialogLines(this.renderList(contentWidth), width);
-    return toDialogLines(this.renderDetail(contentWidth), width);
+    const lines = this.view === "list" ? this.renderList(contentWidth) : this.renderDetail(contentWidth);
+    if (this.view === "detail") {
+      this.detailLineCount = Math.max(this.detailLineCount, lines.length);
+      return toDialogLines(lines, width);
+    }
+
+    if (this.detailLineCount > 0 && lines.length < this.detailLineCount && width > 2) {
+      const bodyHeight = Math.max(0, this.detailLineCount - lines.length);
+      lines.push(...Array(bodyHeight).fill(""));
+    }
+
+    return toDialogLines(lines, width);
   }
 
   handleInput(data: string): void {
@@ -521,7 +546,7 @@ export class GoalManagerDialog implements GoalManagerComponent {
       ["Actions", hints.length ? hints.join(",") : "(none)"],
     ];
 
-    lines.push(...renderRows(["Property", "Value"], table, width, [1, 0], true));
+    lines.push(...renderRows(["Property", "Value"], table, width, [1], true));
     lines.push("");
     lines.push(truncateLine("b/esc back  r refresh  p:pause/resume  c:cancel  n:run now", width));
     return lines;
