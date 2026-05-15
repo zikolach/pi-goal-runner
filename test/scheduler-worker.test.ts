@@ -42,6 +42,17 @@ async function waitForFile(file: string, timeoutMs = 1_000): Promise<void> {
   }
 }
 
+async function waitForRunStatus(store: ReturnType<typeof createGoalStore>, goalId: string, runId: string, status: string, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const goal = await store.get(goalId);
+    const run = goal.runHistory.find((candidate) => candidate.id === runId);
+    if (run?.status === status) return goal;
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for run ${runId} to reach ${status}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 test("due selection skips paused/cancelled/waiting goals", async () => {
   const t = await tempStore();
   try {
@@ -714,14 +725,49 @@ test("worker terminal outcome survives diagnostic write failure", async () => {
 
 test("worker timeout after terminal event records only diagnostic", async () => {
   const t = await tempStore();
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const workerTimeoutMs = 60_000;
+  type CapturedTimeout = {
+    delay?: number;
+    cleared: boolean;
+    fire: () => void;
+    unref: () => CapturedTimeout;
+  };
+  const capturedWorkerTimeouts: CapturedTimeout[] = [];
   try {
+    globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+      if (delay !== workerTimeoutMs) return realSetTimeout(callback, delay, ...args) as ReturnType<typeof globalThis.setTimeout>;
+      const handle: CapturedTimeout = {
+        delay,
+        cleared: false,
+        fire: () => {
+          if (!handle.cleared) callback(...args);
+        },
+        unref: () => handle,
+      };
+      capturedWorkerTimeouts.push(handle);
+      return handle as unknown as ReturnType<typeof globalThis.setTimeout>;
+    }) as unknown as typeof globalThis.setTimeout;
+    globalThis.clearTimeout = ((handle?: ReturnType<typeof globalThis.setTimeout>) => {
+      const captured = handle as unknown as CapturedTimeout | undefined;
+      if (captured && typeof captured === "object" && "cleared" in captured) {
+        captured.cleared = true;
+        return;
+      }
+      return realClearTimeout(handle as Parameters<typeof realClearTimeout>[0]);
+    }) as unknown as typeof globalThis.clearTimeout;
+
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
-    await launchWorker(t.store, goal, "", {
+    const run = await startWorker(t.store, goal, "", {
       command: process.execPath,
       args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => setInterval(() => {}, 1000));"],
-      timeoutMs: 500,
+      timeoutMs: workerTimeoutMs,
     });
-    const updated = await t.store.get("g");
+    await waitForRunStatus(t.store, "g", run.runId, "success", 5_000);
+    assert.equal(capturedWorkerTimeouts.length, 1);
+    capturedWorkerTimeouts[0]?.fire();
+    const updated = await run.done;
     assert.equal(updated.state, "active");
     assert.equal(updated.runHistory.at(-1)?.status, "success");
     assert.equal(updated.lastRunSummary, "done");
@@ -730,6 +776,8 @@ test("worker timeout after terminal event records only diagnostic", async () => 
     assert.equal(runEvents.some((event) => event.type === "failure"), false);
     assert.equal(runEvents.some((event) => event.type === "diagnostic" && /timed out after terminal complete event/.test(event.message ?? "")), true);
   } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
     await t.cleanup();
   }
 });
