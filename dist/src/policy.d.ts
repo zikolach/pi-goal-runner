@@ -1,0 +1,13 @@
+import type { BackoffPolicy, GoalRecord, GoalState, QuietWindowPolicy, SchedulePolicy } from "./types.js";
+export declare function defaultBackoff(): BackoffPolicy;
+export declare function defaultQuietWindow(): QuietWindowPolicy;
+export declare function defaultSchedule(now?: Date): SchedulePolicy;
+export declare function resetBackoff(policy: BackoffPolicy): BackoffPolicy;
+export declare function increaseBackoff(policy: BackoffPolicy): BackoffPolicy;
+export declare function nextCheckAt(backoff: BackoffPolicy, now?: Date): string;
+export declare function updateQuietWindow(policy: QuietWindowPolicy, actionable: boolean, observedAt: string, now?: Date): QuietWindowPolicy;
+export declare function quietWindowExpired(policy: QuietWindowPolicy, now?: Date): boolean;
+export declare function applyNoActionPolicy(goal: GoalRecord, observedAt: string, now?: Date): GoalRecord;
+export declare function applyActionablePolicy(goal: GoalRecord, now?: Date): GoalRecord;
+export declare function isDue(goal: GoalRecord, now?: Date): boolean;
+export declare function isTerminal(state: GoalState): boolean;

@@ -1,0 +1,36 @@
+import { homedir } from "node:os";
+import path from "node:path";
+const RESERVED_GOAL_IDS = new Set(["worktrees"]);
+export function defaultStateRoot() {
+    const configured = process.env.PI_GOAL_STATE_DIR?.trim();
+    if (configured)
+        return configured;
+    return path.join(homedir(), ".pi", "agent", "goals");
+}
+export function createStatePaths(root = defaultStateRoot()) {
+    const goalsDir = root;
+    const worktreesDir = path.join(root, "worktrees");
+    return {
+        root,
+        goalsDir,
+        worktreesDir,
+        goalDir: (goalId) => path.join(goalsDir, sanitizeGoalId(goalId)),
+        stateFile: (goalId) => path.join(goalsDir, sanitizeGoalId(goalId), "state.json"),
+        eventsFile: (goalId) => path.join(goalsDir, sanitizeGoalId(goalId), "events.jsonl"),
+        lockDir: (goalId) => path.join(goalsDir, sanitizeGoalId(goalId), ".lock"),
+        worktreeDir: (goalId) => path.join(worktreesDir, sanitizeGoalId(goalId)),
+    };
+}
+export function sanitizeGoalId(goalId) {
+    if (goalId === "." ||
+        goalId === ".." ||
+        goalId.includes("..") ||
+        path.isAbsolute(goalId) ||
+        path.basename(goalId) !== goalId ||
+        RESERVED_GOAL_IDS.has(goalId.toLowerCase()) ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(goalId)) {
+        throw new Error(`Invalid goal id: ${goalId}`);
+    }
+    return goalId;
+}
+//# sourceMappingURL=paths.js.map
