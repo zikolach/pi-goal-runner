@@ -223,6 +223,39 @@ test("explicit same-path mode keeps the user checkout", async () => {
   }
 });
 
+test("explicit same-path mode records the actual local HEAD, not observed PR head", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-same-path-head`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const store = createGoalStore(statePath);
+  try {
+    await createRepo(repoPath);
+    const localHeadSha = await headSha(repoPath);
+    await writeFile(path.join(repoPath, "file.txt"), "newer");
+    await execFileAsync("git", ["-C", repoPath, "commit", "-am", "advance"]);
+    const observedHeadSha = await headSha(repoPath);
+    await execFileAsync("git", ["-C", repoPath, "checkout", "--detach", localHeadSha]);
+
+    const goal = await store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r", localPath: repoPath, worktreeMode: "same_path" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    const updated = await ensureGoalWorktree(store, goal, { observedHeadSha });
+
+    assert.notEqual(localHeadSha, observedHeadSha);
+    assert.equal(updated.github?.repository.worktreePath, repoPath);
+    assert.equal(updated.github?.repository.worktreeMode, "same_path");
+    assert.equal(updated.github?.repository.worktreeHeadSha, localHeadSha);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("explicit same-path mode ignores a previously stored isolated worktree path", async () => {
   const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-same-path-overrides-isolated`);
   const repoPath = path.join(root, "repo");

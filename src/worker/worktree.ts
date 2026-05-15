@@ -67,7 +67,7 @@ export async function ensureGoalWorktree(store: GoalStore, goal: GoalRecord, opt
 
 async function ensureSamePathWorktree(store: GoalStore, goal: GoalRecord, repoPath: string, options: EnsureGoalWorktreeOptions): Promise<GoalRecord> {
   if (!goal.github) return goal;
-  const headSha = options.observedHeadSha ?? await resolveCommitish(repoPath, "HEAD").catch(() => undefined);
+  const headSha = await resolveCommitish(repoPath, "HEAD").catch(() => options.observedHeadSha);
   const nextRepository = {
     ...goal.github.repository,
     worktreePath: repoPath,
