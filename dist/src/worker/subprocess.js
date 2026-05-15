@@ -225,9 +225,12 @@ function buildLateProcessDiagnostic(terminalEventType, timedOut, code, signal, s
 export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatus) {
     let acceptedTerminalEvent = false;
     await appendGoalEvent(store.paths, event);
+    if (terminalEventType(event)) {
+        const current = await store.get(goalId);
+        if (hasTerminalRun(current, runId))
+            return false;
+    }
     await store.update(goalId, (goal) => {
-        if (terminalEventType(event) && hasTerminalRun(goal, runId))
-            return goal;
         const runHistory = goal.runHistory.map((run) => {
             if (run.id !== runId)
                 return run;

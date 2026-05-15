@@ -7,7 +7,7 @@ import { createGoalStore } from "../src/state/store.js";
 import { defaultSchedule } from "../src/policy.js";
 import { MAX_HANDLED_CHECK_NAMES, MAX_HANDLED_THREAD_IDS } from "../src/github/handled.js";
 import { handleSuccessfulWorkerComplete, selectDueGoals, schedulerTick } from "../src/scheduler.js";
-import { ingestWorkerEvent, launchWorker, MAX_WORKER_STDOUT_BUFFER_CHARS } from "../src/worker/subprocess.js";
+import { ingestWorkerEvent, launchWorker, MAX_WORKER_STDOUT_BUFFER_CHARS, startWorker } from "../src/worker/subprocess.js";
 import { CommandNotificationSink, createDefaultNotificationSink, notifyNonFatal } from "../src/notifications.js";
 
 async function tempStore() {
@@ -26,6 +26,19 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs = 1_000): Promise<T
     ]);
   } finally {
     if (timer) clearTimeout(timer);
+  }
+}
+
+async function waitForFile(file: string, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      await readFile(file);
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
   }
 }
 
@@ -334,11 +347,14 @@ test("late worker failure does not override terminal success", async () => {
   try {
     await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
     await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done", commitSha: "abc1234" });
+    const afterComplete = await t.store.get("g");
+    await new Promise((resolve) => setTimeout(resolve, 10));
     await ingestWorkerEvent(t.store, "g", "r", { type: "failure", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:01Z", message: "late process exit", retryable: true });
     const updated = await t.store.get("g");
     assert.equal(updated.state, "active");
     assert.equal(updated.runHistory.at(-1)?.status, "success");
     assert.equal(updated.latestProgress, "done");
+    assert.equal(updated.updatedAt, afterComplete.updatedAt);
   } finally {
     await t.cleanup();
   }
@@ -357,11 +373,14 @@ test("late worker terminal events do not override the first terminal outcome", a
 
     await t.store.create({ id: "complete-first", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
     await ingestWorkerEvent(t.store, "complete-first", "r", { type: "complete", goalId: "complete-first", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done" });
+    const afterComplete = await t.store.get("complete-first");
+    await new Promise((resolve) => setTimeout(resolve, 10));
     await ingestWorkerEvent(t.store, "complete-first", "r", { type: "decision", goalId: "complete-first", runId: "r", timestamp: "2026-01-01T00:00:01Z", decision: { id: "late-decision", goalId: "complete-first", runId: "r", prompt: "Late decision", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
     const completeFirst = await t.store.get("complete-first");
     assert.equal(completeFirst.state, "active");
     assert.equal(completeFirst.runHistory.at(-1)?.status, "success");
     assert.equal(completeFirst.pendingDecisions.some((decision) => decision.id === "late-decision"), false);
+    assert.equal(completeFirst.updatedAt, afterComplete.updatedAt);
   } finally {
     await t.cleanup();
   }
@@ -762,20 +781,29 @@ test("terminal event emitted after timeout does not override timeout", async () 
   const t = await tempStore();
   try {
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
-    await launchWorker(t.store, goal, "", {
+    const readyFile = path.join(t.store.paths.root, "worker-ready");
+    const observedSignalFile = path.join(t.store.paths.root, "worker-sigterm-observed");
+    const run = await startWorker(t.store, goal, "", {
       command: process.execPath,
       args: [
         "-e",
         [
+          "const fs = require('node:fs');",
+          `const readyFile = ${JSON.stringify(readyFile)};`,
+          `const observedSignalFile = ${JSON.stringify(observedSignalFile)};`,
           "process.on('SIGTERM', () => {",
+          "fs.writeFileSync(observedSignalFile, 'yes');",
           "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'late success'}) + '\\n', () => setTimeout(() => process.exit(0), 50));",
           "});",
+          "fs.writeFileSync(readyFile, 'yes');",
           "setInterval(() => {}, 1000);",
         ].join(""),
       ],
-      timeoutMs: 20,
+      timeoutMs: 1_000,
     });
-    const updated = await t.store.get("g");
+    await waitForFile(readyFile, 900);
+    const updated = await run.done;
+    assert.equal(await readFile(observedSignalFile, "utf8"), "yes");
     assert.equal(updated.state, "failed");
     assert.equal(updated.runHistory.at(-1)?.status, "timeout");
     assert.match(updated.latestProgress ?? "", /Worker timed out/);

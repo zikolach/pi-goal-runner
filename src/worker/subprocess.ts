@@ -228,8 +228,11 @@ function buildLateProcessDiagnostic(terminalEventType: "complete" | "failure" | 
 export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId: string, event: GoalEvent, forcedStatus?: RunSummary["status"]): Promise<boolean> {
   let acceptedTerminalEvent = false;
   await appendGoalEvent(store.paths, event);
+  if (terminalEventType(event)) {
+    const current = await store.get(goalId);
+    if (hasTerminalRun(current, runId)) return false;
+  }
   await store.update(goalId, (goal) => {
-    if (terminalEventType(event) && hasTerminalRun(goal, runId)) return goal;
     const runHistory = goal.runHistory.map((run) => {
       if (run.id !== runId) return run;
       if (event.type === "complete") return { ...run, completedAt: event.timestamp, status: event.status === "stale" ? "failed" as const : "success" as const, summary: event.summary, commitSha: event.commitSha, validationResults: event.validationResults };
