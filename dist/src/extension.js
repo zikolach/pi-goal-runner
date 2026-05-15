@@ -2,6 +2,7 @@ import { createGoalStore } from "./state/store.js";
 import { GOAL_SUBCOMMANDS, handleGoalCommand } from "./commands.js";
 import { schedulerTick } from "./scheduler.js";
 import { parseDaemonInterval } from "./cli.js";
+import { isTerminal } from "./policy.js";
 export function runSerializedSchedulerTick(state, tick, onError) {
     if (state.inFlight)
         return false;
@@ -27,6 +28,18 @@ export function splitCompletionPrefix(prefix) {
     if (trimmed.length > 0 && /\s$/.test(prefix) && parts.at(-1) !== "")
         return [...parts, ""];
     return parts;
+}
+export function shouldSuggestDaemon(goals) {
+    return goals.some(isDaemonEligibleGoal);
+}
+export function buildDaemonSuggestionMessage(daemonEligibleCount) {
+    return `Goal runner extension stops when the session exits (${daemonEligibleCount} goal${daemonEligibleCount === 1 ? "" : "s"} eligible for daemon checks). Run \`npm run goal -- daemon\` from the pi-goal-runner checkout to keep checking in background.`;
+}
+function isDaemonEligibleGoal(goal) {
+    return !isTerminal(goal.state)
+        && goal.state !== "paused"
+        && goal.state !== "needs_decision"
+        && !goal.pendingDecisions.some((decision) => decision.status === "pending" && decision.required);
 }
 export default function goalRunnerExtension(pi) {
     const store = createGoalStore();
@@ -83,14 +96,33 @@ export default function goalRunnerExtension(pi) {
             timer.unref();
         }
     });
-    pi.on?.("session_shutdown", () => {
+    pi.on?.("session_shutdown", async (_event, ctx) => {
         if (timer)
             clearInterval(timer);
         timer = undefined;
+        try {
+            const goals = await store.list();
+            const daemonEligibleGoals = goals.filter(isDaemonEligibleGoal);
+            if (daemonEligibleGoals.length > 0) {
+                const message = buildDaemonSuggestionMessage(daemonEligibleGoals.length);
+                try {
+                    ctx.ui.notify(message, "info");
+                }
+                catch {
+                    // ignore
+                }
+                // session shutdown can tear down UI before notifications render;
+                // write to stderr as a reliable fallback.
+                process.stderr.write(`${message}\n`);
+            }
+        }
+        catch {
+            // Best effort only; session is shutting down.
+        }
     });
     async function refreshWidget(ctx) {
         const goals = await store.list();
-        const active = goals.filter((goal) => !["completed", "cancelled", "dormant"].includes(goal.state)).length;
+        const active = goals.filter((goal) => !isTerminal(goal.state)).length;
         const decisions = goals.reduce((count, goal) => count + goal.pendingDecisions.filter((decision) => decision.status === "pending").length, 0);
         ctx.ui.setStatus?.("goals", active ? `goals:${active}${decisions ? ` decisions:${decisions}` : ""}` : undefined);
         if (decisions) {

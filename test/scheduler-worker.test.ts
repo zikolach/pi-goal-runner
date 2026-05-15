@@ -7,7 +7,7 @@ import { createGoalStore } from "../src/state/store.js";
 import { defaultSchedule } from "../src/policy.js";
 import { MAX_HANDLED_CHECK_NAMES, MAX_HANDLED_THREAD_IDS } from "../src/github/handled.js";
 import { handleSuccessfulWorkerComplete, selectDueGoals, schedulerTick } from "../src/scheduler.js";
-import { ingestWorkerEvent, launchWorker, MAX_WORKER_STDOUT_BUFFER_CHARS } from "../src/worker/subprocess.js";
+import { ingestWorkerEvent, launchWorker, MAX_WORKER_STDOUT_BUFFER_CHARS, startWorker } from "../src/worker/subprocess.js";
 import { CommandNotificationSink, createDefaultNotificationSink, notifyNonFatal } from "../src/notifications.js";
 
 async function tempStore() {
@@ -27,6 +27,73 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs = 1_000): Promise<T
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+async function waitForFile(file: string, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      await readFile(file);
+      return;
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+}
+
+async function waitForRunStatus(store: ReturnType<typeof createGoalStore>, goalId: string, runId: string, status: string, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const goal = await store.get(goalId);
+    const run = goal.runHistory.find((candidate) => candidate.id === runId);
+    if (run?.status === status) return goal;
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for run ${runId} to reach ${status}`);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+type CapturedWorkerTimeout = {
+  delay?: number;
+  cleared: boolean;
+  fire: () => void;
+  unref: () => CapturedWorkerTimeout;
+};
+
+function captureWorkerTimeouts(workerTimeoutMs: number) {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const capturedWorkerTimeouts: CapturedWorkerTimeout[] = [];
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    if (delay !== workerTimeoutMs) return realSetTimeout(callback, delay, ...args) as ReturnType<typeof globalThis.setTimeout>;
+    const handle: CapturedWorkerTimeout = {
+      delay,
+      cleared: false,
+      fire: () => {
+        if (!handle.cleared) callback(...args);
+      },
+      unref: () => handle,
+    };
+    capturedWorkerTimeouts.push(handle);
+    return handle as unknown as ReturnType<typeof globalThis.setTimeout>;
+  }) as unknown as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((handle?: ReturnType<typeof globalThis.setTimeout>) => {
+    const captured = handle as unknown as CapturedWorkerTimeout | undefined;
+    if (captured && typeof captured === "object" && "cleared" in captured) {
+      captured.cleared = true;
+      return;
+    }
+    return realClearTimeout(handle as Parameters<typeof realClearTimeout>[0]);
+  }) as unknown as typeof globalThis.clearTimeout;
+
+  return {
+    capturedWorkerTimeouts,
+    restore: () => {
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    },
+  };
 }
 
 test("due selection skips paused/cancelled/waiting goals", async () => {
@@ -295,16 +362,20 @@ test("scheduler launches workers in background and continues checking due goals"
 test("worker event ingestion records decisions, completion, failures", async () => {
   const t = await tempStore();
   try {
-    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await t.store.create({ id: "decision", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
     const decisionAt = "2026-01-01T00:00:00Z";
-    await ingestWorkerEvent(t.store, "g", "r", { type: "decision", goalId: "g", runId: "r", timestamp: decisionAt, decision: { id: "d", goalId: "g", runId: "r", prompt: "Choose", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
-    const decisionGoal = await t.store.get("g");
+    await ingestWorkerEvent(t.store, "decision", "r", { type: "decision", goalId: "decision", runId: "r", timestamp: decisionAt, decision: { id: "d", goalId: "decision", runId: "r", prompt: "Choose", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
+    const decisionGoal = await t.store.get("decision");
     assert.equal(decisionGoal.state, "needs_decision");
     assert.equal(decisionGoal.runHistory.at(-1)?.completedAt, decisionAt);
-    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc" });
-    assert.equal((await t.store.get("g")).lastRunSummary, "done");
-    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "quiet", summary: "quiet" });
-    assert.equal((await t.store.get("g")).state, "completed");
+
+    await t.store.create({ id: "complete", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "complete", "r", { type: "complete", goalId: "complete", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc" });
+    assert.equal((await t.store.get("complete")).lastRunSummary, "done");
+
+    await t.store.create({ id: "quiet", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "quiet", "r", { type: "complete", goalId: "quiet", runId: "r", timestamp: new Date().toISOString(), status: "quiet", summary: "quiet" });
+    assert.equal((await t.store.get("quiet")).state, "completed");
   } finally {
     await t.cleanup();
   }
@@ -330,11 +401,58 @@ test("late worker failure does not override terminal success", async () => {
   try {
     await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
     await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done", commitSha: "abc1234" });
+    const afterComplete = await t.store.get("g");
+    await new Promise((resolve) => setTimeout(resolve, 10));
     await ingestWorkerEvent(t.store, "g", "r", { type: "failure", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:01Z", message: "late process exit", retryable: true });
     const updated = await t.store.get("g");
     assert.equal(updated.state, "active");
     assert.equal(updated.runHistory.at(-1)?.status, "success");
     assert.equal(updated.latestProgress, "done");
+    assert.equal(updated.updatedAt, afterComplete.updatedAt);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("late worker non-terminal events do not override terminal success", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done", commitSha: "abc1234" });
+    const afterComplete = await t.store.get("g");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await ingestWorkerEvent(t.store, "g", "r", { type: "progress", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:01Z", message: "late progress" });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    assert.equal(updated.latestProgress, "done");
+    assert.equal(updated.updatedAt, afterComplete.updatedAt);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("late worker terminal events do not override the first terminal outcome", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "failure-first", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "failure-first", "r", { type: "failure", goalId: "failure-first", runId: "r", timestamp: "2026-01-01T00:00:00Z", message: "first failure", retryable: true });
+    await ingestWorkerEvent(t.store, "failure-first", "r", { type: "complete", goalId: "failure-first", runId: "r", timestamp: "2026-01-01T00:00:01Z", status: "success", summary: "late success" });
+    const failureFirst = await t.store.get("failure-first");
+    assert.equal(failureFirst.state, "failed");
+    assert.equal(failureFirst.runHistory.at(-1)?.status, "failed");
+    assert.notEqual(failureFirst.lastRunSummary, "late success");
+
+    await t.store.create({ id: "complete-first", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "complete-first", "r", { type: "complete", goalId: "complete-first", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done" });
+    const afterComplete = await t.store.get("complete-first");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await ingestWorkerEvent(t.store, "complete-first", "r", { type: "decision", goalId: "complete-first", runId: "r", timestamp: "2026-01-01T00:00:01Z", decision: { id: "late-decision", goalId: "complete-first", runId: "r", prompt: "Late decision", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
+    const completeFirst = await t.store.get("complete-first");
+    assert.equal(completeFirst.state, "active");
+    assert.equal(completeFirst.runHistory.at(-1)?.status, "success");
+    assert.equal(completeFirst.pendingDecisions.some((decision) => decision.id === "late-decision"), false);
+    assert.equal(completeFirst.updatedAt, afterComplete.updatedAt);
   } finally {
     await t.cleanup();
   }
@@ -427,14 +545,15 @@ test("worker stdout events are serialized in emission order", async () => {
         "-e",
         [
           "console.log(JSON.stringify({type:'progress', message:'one'}));",
-          "console.log(JSON.stringify({type:'decision', decision:{id:'d', prompt:'Pick', options:[{id:'x', label:'X'}]}}));",
+          "console.log(JSON.stringify({type:'progress', message:'two'}));",
           "console.log(JSON.stringify({type:'complete', status:'success', summary:'done'}));",
         ].join(""),
       ],
     });
     const updated = await t.store.get("g");
-    assert.equal(updated.pendingDecisions.some((decision) => decision.id === "d"), true);
     assert.equal(updated.lastRunSummary, "done");
+    const events = (await readFile(t.store.paths.eventsFile("g"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; message?: string; summary?: string });
+    assert.deepEqual(events.map((event) => event.message ?? event.summary), ["one", "two", "done"]);
   } finally {
     await t.cleanup();
   }
@@ -563,8 +682,7 @@ test("worker decision terminal event is not overridden by non-zero exit", async 
       args: [
         "-e",
         [
-          "console.log(JSON.stringify({type:'decision', decision:{id:'d', prompt:'Pick', options:[{id:'x', label:'X'}]}}));",
-          "process.exit(7);",
+          "process.stdout.write(JSON.stringify({type:'decision', decision:{id:'d', prompt:'Pick', options:[{id:'x', label:'X'}]}}) + '\\n', () => process.exit(7));",
         ].join(""),
       ],
     });
@@ -572,6 +690,122 @@ test("worker decision terminal event is not overridden by non-zero exit", async 
     assert.equal(updated.state, "needs_decision");
     assert.equal(updated.runHistory.at(-1)?.status, "needs_decision");
     assert.equal(updated.pendingDecisions.some((decision) => decision.id === "d" && decision.status === "pending"), true);
+    const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
+    assert.match(events, /Worker process exited with code 7 after terminal decision event/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker complete terminal event is not overridden by non-zero exit and records diagnostic", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => process.exit(9));"],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    assert.equal(updated.lastRunSummary, "done");
+    const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
+    assert.match(events, /Worker process exited with code 9 after terminal complete event/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("late terminal-looking failure does not change authoritative diagnostic type", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "const events = [",
+          "{type:'complete', status:'success', summary:'done'},",
+          "{type:'failure', message:'late protocol failure', retryable:true},",
+          "];",
+          "process.stdout.write(events.map((event) => JSON.stringify(event)).join('\\n') + '\\n', () => process.exit(9));",
+        ].join(""),
+      ],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    const events = await readFile(t.store.paths.eventsFile("g"), "utf8");
+    assert.match(events, /Worker process exited with code 9 after terminal complete event/);
+    assert.doesNotMatch(events, /after terminal failure event/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker terminal outcome survives diagnostic write failure", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => process.exit(9));"],
+      onComplete: async () => {
+        const eventsFile = t.store.paths.eventsFile("g");
+        await rm(eventsFile, { force: true });
+        await mkdir(eventsFile, { recursive: true });
+      },
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    assert.equal(updated.lastRunSummary, "done");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker timeout after terminal event records only diagnostic", async () => {
+  const t = await tempStore();
+  const workerTimeoutMs = 60_000;
+  const { capturedWorkerTimeouts, restore } = captureWorkerTimeouts(workerTimeoutMs);
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    const run = await startWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => setInterval(() => {}, 1000));"],
+      timeoutMs: workerTimeoutMs,
+    });
+    await waitForRunStatus(t.store, "g", run.runId, "success", 5_000);
+    assert.equal(capturedWorkerTimeouts.length, 1);
+    capturedWorkerTimeouts[0]?.fire();
+    const updated = await run.done;
+    assert.equal(updated.state, "active");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    assert.equal(updated.lastRunSummary, "done");
+    const events = (await readFile(t.store.paths.eventsFile("g"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; runId?: string; message?: string });
+    const runEvents = events.filter((event) => event.runId === updated.runHistory.at(-1)?.id);
+    assert.equal(runEvents.some((event) => event.type === "failure"), false);
+    assert.equal(runEvents.some((event) => event.type === "diagnostic" && /timed out after terminal complete event/.test(event.message ?? "")), true);
+  } finally {
+    restore();
+    await t.cleanup();
+  }
+});
+
+test("worker emitted failure remains authoritative when process exits zero", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: ["-e", "process.stdout.write(JSON.stringify({type:'failure', message:'emitted failure', retryable:true}) + '\\n', () => process.exit(0));"],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "failed");
+    assert.equal(updated.runHistory.at(-1)?.status, "failed");
+    assert.match(updated.latestProgress ?? "", /emitted failure/);
   } finally {
     await t.cleanup();
   }
@@ -588,6 +822,102 @@ test("worker exit without terminal event records failure", async () => {
     const updated = await t.store.get("g");
     assert.equal(updated.state, "failed");
     assert.match(updated.latestProgress ?? "", /without emitting a terminal event/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker non-zero exit without terminal event remains failure", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", { command: process.execPath, args: ["-e", "process.stderr.write('boom'); process.exit(2);"] });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "failed");
+    assert.equal(updated.runHistory.at(-1)?.status, "failed");
+    assert.match(updated.latestProgress ?? "", /Worker exited with code 2/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("worker timeout without terminal event remains failure", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", { command: process.execPath, args: ["-e", "setInterval(() => {}, 1000);"], timeoutMs: 20 });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "failed");
+    assert.equal(updated.runHistory.at(-1)?.status, "timeout");
+    assert.match(updated.latestProgress ?? "", /Worker timed out/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("terminal event emitted after timeout does not override timeout", async () => {
+  const t = await tempStore();
+  const workerTimeoutMs = 60_000;
+  const { capturedWorkerTimeouts, restore } = captureWorkerTimeouts(workerTimeoutMs);
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    const readyFile = path.join(t.store.paths.root, "worker-ready");
+    const observedSignalFile = path.join(t.store.paths.root, "worker-sigterm-observed");
+    const run = await startWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "const fs = require('node:fs');",
+          `const readyFile = ${JSON.stringify(readyFile)};`,
+          `const observedSignalFile = ${JSON.stringify(observedSignalFile)};`,
+          "process.on('SIGTERM', () => {",
+          "fs.writeFileSync(observedSignalFile, 'yes');",
+          "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'late success'}) + '\\n', () => setTimeout(() => process.exit(0), 50));",
+          "});",
+          "fs.writeFileSync(readyFile, 'yes');",
+          "setInterval(() => {}, 1000);",
+        ].join(""),
+      ],
+      timeoutMs: workerTimeoutMs,
+    });
+    await waitForFile(readyFile, 5_000);
+    assert.equal(capturedWorkerTimeouts.length, 1);
+    capturedWorkerTimeouts[0]?.fire();
+    const updated = await run.done;
+    assert.equal(await readFile(observedSignalFile, "utf8"), "yes");
+    assert.equal(updated.state, "failed");
+    assert.equal(updated.runHistory.at(-1)?.status, "timeout");
+    assert.match(updated.latestProgress ?? "", /Worker timed out/);
+    assert.notEqual(updated.lastRunSummary, "late success");
+  } finally {
+    restore();
+    await t.cleanup();
+  }
+});
+
+test("stale-context-like stderr after completion is recorded only as diagnostic", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => {",
+          "process.stderr.write('Error: This extension ctx is stale after session replacement\\n', () => process.exit(1));",
+          "});",
+        ].join(""),
+      ],
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.runHistory.at(-1)?.status, "success");
+    assert.equal(updated.lastRunSummary, "done");
+    const events = (await readFile(t.store.paths.eventsFile("g"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; runId?: string; message?: string });
+    const runEvents = events.filter((event) => event.runId === updated.runHistory.at(-1)?.id);
+    assert.equal(runEvents.some((event) => event.type === "failure"), false);
+    assert.equal(runEvents.some((event) => event.type === "diagnostic" && /stale after session replacement/.test(event.message ?? "")), true);
   } finally {
     await t.cleanup();
   }
@@ -666,11 +996,14 @@ test("worker close fallback resolves even when state writes and reads fail", asy
 test("stale completion does not advance handled timestamps", async () => {
   const t = await tempStore();
   try {
-    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }], github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] } });
-    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "stale", summary: "stale", addressedThreadIds: ["t1"] });
-    assert.equal((await t.store.get("g")).github?.lastHandledAt, undefined);
-    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:01Z", status: "success", summary: "done", addressedThreadIds: ["t1"] });
-    const updated = await t.store.get("g");
+    const github = { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] };
+    await t.store.create({ id: "stale", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }], github });
+    await ingestWorkerEvent(t.store, "stale", "r", { type: "complete", goalId: "stale", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "stale", summary: "stale", addressedThreadIds: ["t1"] });
+    assert.equal((await t.store.get("stale")).github?.lastHandledAt, undefined);
+
+    await t.store.create({ id: "success", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }], github });
+    await ingestWorkerEvent(t.store, "success", "r", { type: "complete", goalId: "success", runId: "r", timestamp: "2026-01-01T00:00:01Z", status: "success", summary: "done", addressedThreadIds: ["t1"] });
+    const updated = await t.store.get("success");
     assert.equal(updated.github?.lastHandledAt, "2026-01-01T00:00:01Z");
     assert.deepEqual(updated.github?.handledThreadIds, ["t1"]);
   } finally {
