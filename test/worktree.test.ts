@@ -223,6 +223,50 @@ test("explicit same-path mode keeps the user checkout", async () => {
   }
 });
 
+test("explicit same-path mode ignores a previously stored isolated worktree path", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-same-path-overrides-isolated`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const store = createGoalStore(statePath);
+  const priorWorktreePath = path.join(statePath, "worktrees", "g");
+  try {
+    await createRepo(repoPath);
+    const observedHeadSha = await headSha(repoPath);
+    const goal = await store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r", localPath: repoPath, worktreePath: priorWorktreePath, worktreeMode: "same_path", worktreeHeadSha: observedHeadSha, pushRemote: "origin" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    const updated = await ensureGoalWorktree(store, goal, { observedHeadSha });
+
+    assert.equal(updated.github?.repository.worktreePath, repoPath);
+    assert.equal(updated.github?.repository.worktreeMode, "same_path");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reusing a branch worktree without remotes falls back to the local branch", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-reuse-no-remote`);
+  const repoPath = path.join(root, "repo");
+  const worktreePath = path.join(root, "state", "worktrees", "wt");
+  try {
+    await createRepo(repoPath);
+    await execFileAsync("git", ["-C", repoPath, "branch", "feature"]);
+    await createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "feature");
+
+    await createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "feature");
+
+    assert.equal(await readFile(path.join(worktreePath, "file.txt"), "utf8"), "data");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("dirty isolated worktrees fail safely before refresh", async () => {
   const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-dirty`);
   const repoPath = path.join(root, "repo");

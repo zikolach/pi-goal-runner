@@ -70,7 +70,7 @@ async function ensureSamePathWorktree(store: GoalStore, goal: GoalRecord, repoPa
   const headSha = options.observedHeadSha ?? await resolveCommitish(repoPath, "HEAD").catch(() => undefined);
   const nextRepository = {
     ...goal.github.repository,
-    worktreePath: goal.github.repository.worktreePath ?? repoPath,
+    worktreePath: repoPath,
     worktreeMode: "same_path" as const,
     worktreeHeadSha: headSha ?? goal.github.repository.worktreeHeadSha,
     pushRemote: goal.github.repository.pushRemote ?? DEFAULT_PUSH_REMOTE,
@@ -88,7 +88,8 @@ async function ensureSamePathWorktree(store: GoalStore, goal: GoalRecord, repoPa
 }
 
 function repositoriesMatch(left: RepositoryRef, right: RepositoryRef): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
+  const fields: Array<keyof RepositoryRef> = ["owner", "repo", "url", "localPath", "branch", "baseBranch", "worktreePath", "worktreeMode", "worktreeHeadSha", "pushRemote", "pushBranch"];
+  return fields.every((field) => left[field] === right[field]);
 }
 
 function isExpectedWorktreePath(expectedWorktreePath: string, worktreePath: string): boolean {
@@ -112,7 +113,7 @@ export async function createOrReuseWorktree(paths: StatePaths, repoPath: string,
   }
   await prepareWorktreePath(worktreePath);
   try {
-    if (options.observedHeadSha || options.branch) await fetchRepository(repoPath);
+    if (options.observedHeadSha || options.branch) await fetchRepositoryIfConfigured(repoPath);
     const revision = await resolveCheckoutRevision(repoPath, options);
     await execFileAsync("git", ["-C", repoPath, "worktree", "add", "--detach", worktreePath, "--", revision], { maxBuffer: 10 * 1024 * 1024 });
     const headSha = await resolveCommitish(worktreePath, "HEAD").catch(() => undefined);
@@ -125,7 +126,7 @@ export async function createOrReuseWorktree(paths: StatePaths, repoPath: string,
 async function updateExistingWorktree(worktreePath: string, options: CreateWorktreeOptions): Promise<string | undefined> {
   try {
     await assertWorktreeClean(worktreePath);
-    if (options.observedHeadSha || options.branch) await fetchRepository(worktreePath);
+    if (options.observedHeadSha || options.branch) await fetchRepositoryIfConfigured(worktreePath);
     const revision = await resolveCheckoutRevision(worktreePath, options);
     await execFileAsync("git", ["-C", worktreePath, "checkout", "--detach", revision], { maxBuffer: 10 * 1024 * 1024 });
     await execFileAsync("git", ["-C", worktreePath, "reset", "--hard", revision], { maxBuffer: 10 * 1024 * 1024 });
@@ -135,8 +136,14 @@ async function updateExistingWorktree(worktreePath: string, options: CreateWorkt
   }
 }
 
-async function fetchRepository(repoPath: string): Promise<void> {
+async function fetchRepositoryIfConfigured(repoPath: string): Promise<void> {
+  if (!await hasConfiguredRemotes(repoPath)) return;
   await execFileAsync("git", ["-C", repoPath, "fetch", "--all", "--prune"], { maxBuffer: 10 * 1024 * 1024 });
+}
+
+async function hasConfiguredRemotes(repoPath: string): Promise<boolean> {
+  const { stdout } = await execFileAsync("git", ["-C", repoPath, "remote"], { maxBuffer: 1024 * 1024 });
+  return stdout.trim().length > 0;
 }
 
 async function assertWorktreeClean(worktreePath: string): Promise<void> {
