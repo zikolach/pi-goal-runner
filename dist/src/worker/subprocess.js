@@ -55,13 +55,16 @@ export async function startWorker(store, goal, prompt, options = {}) {
             }
         };
         const enqueueEvent = (event, forcedStatus) => {
-            const emittedTerminalType = event.type === "complete" || event.type === "failure" || event.type === "decision" ? event.type : undefined;
+            const emittedTerminalType = terminalEventType(event);
+            const terminalEventAfterTimeout = Boolean(emittedTerminalType && timedOut && !authoritativeTerminalEventType && forcedStatus !== "timeout");
+            if (terminalEventAfterTimeout)
+                return ingestionQueue;
             ingestionQueue = ingestionQueue.catch(() => undefined).then(async () => {
                 try {
                     const acceptedTerminalEvent = await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
-                    if (emittedTerminalType && acceptedTerminalEvent)
+                    if (emittedTerminalType && acceptedTerminalEvent && !authoritativeTerminalEventType)
                         authoritativeTerminalEventType = emittedTerminalType;
-                    if (event.type === "complete" && event.status === "success")
+                    if (event.type === "complete" && event.status === "success" && acceptedTerminalEvent)
                         await options.onComplete?.(event);
                 }
                 catch (error) {
@@ -223,9 +226,8 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
     let acceptedTerminalEvent = false;
     await appendGoalEvent(store.paths, event);
     await store.update(goalId, (goal) => {
-        if (event.type === "failure" && hasTerminalRun(goal, runId)) {
-            return { ...goal, latestProgress: goal.latestProgress ?? event.message };
-        }
+        if (terminalEventType(event) && hasTerminalRun(goal, runId))
+            return goal;
         const runHistory = goal.runHistory.map((run) => {
             if (run.id !== runId)
                 return run;
@@ -261,6 +263,9 @@ export async function ingestWorkerEvent(store, goalId, runId, event, forcedStatu
         return { ...goal, runHistory, latestProgress: event.message };
     });
     return acceptedTerminalEvent;
+}
+function terminalEventType(event) {
+    return event.type === "complete" || event.type === "failure" || event.type === "decision" ? event.type : undefined;
 }
 function hasTerminalRun(goal, runId) {
     const run = goal.runHistory.find((candidate) => candidate.id === runId);

@@ -295,16 +295,20 @@ test("scheduler launches workers in background and continues checking due goals"
 test("worker event ingestion records decisions, completion, failures", async () => {
   const t = await tempStore();
   try {
-    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await t.store.create({ id: "decision", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
     const decisionAt = "2026-01-01T00:00:00Z";
-    await ingestWorkerEvent(t.store, "g", "r", { type: "decision", goalId: "g", runId: "r", timestamp: decisionAt, decision: { id: "d", goalId: "g", runId: "r", prompt: "Choose", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
-    const decisionGoal = await t.store.get("g");
+    await ingestWorkerEvent(t.store, "decision", "r", { type: "decision", goalId: "decision", runId: "r", timestamp: decisionAt, decision: { id: "d", goalId: "decision", runId: "r", prompt: "Choose", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
+    const decisionGoal = await t.store.get("decision");
     assert.equal(decisionGoal.state, "needs_decision");
     assert.equal(decisionGoal.runHistory.at(-1)?.completedAt, decisionAt);
-    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc" });
-    assert.equal((await t.store.get("g")).lastRunSummary, "done");
-    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: new Date().toISOString(), status: "quiet", summary: "quiet" });
-    assert.equal((await t.store.get("g")).state, "completed");
+
+    await t.store.create({ id: "complete", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "complete", "r", { type: "complete", goalId: "complete", runId: "r", timestamp: new Date().toISOString(), status: "success", summary: "done", commitSha: "abc" });
+    assert.equal((await t.store.get("complete")).lastRunSummary, "done");
+
+    await t.store.create({ id: "quiet", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "quiet", "r", { type: "complete", goalId: "quiet", runId: "r", timestamp: new Date().toISOString(), status: "quiet", summary: "quiet" });
+    assert.equal((await t.store.get("quiet")).state, "completed");
   } finally {
     await t.cleanup();
   }
@@ -335,6 +339,29 @@ test("late worker failure does not override terminal success", async () => {
     assert.equal(updated.state, "active");
     assert.equal(updated.runHistory.at(-1)?.status, "success");
     assert.equal(updated.latestProgress, "done");
+  } finally {
+    await t.cleanup();
+  }
+});
+
+test("late worker terminal events do not override the first terminal outcome", async () => {
+  const t = await tempStore();
+  try {
+    await t.store.create({ id: "failure-first", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "failure-first", "r", { type: "failure", goalId: "failure-first", runId: "r", timestamp: "2026-01-01T00:00:00Z", message: "first failure", retryable: true });
+    await ingestWorkerEvent(t.store, "failure-first", "r", { type: "complete", goalId: "failure-first", runId: "r", timestamp: "2026-01-01T00:00:01Z", status: "success", summary: "late success" });
+    const failureFirst = await t.store.get("failure-first");
+    assert.equal(failureFirst.state, "failed");
+    assert.equal(failureFirst.runHistory.at(-1)?.status, "failed");
+    assert.notEqual(failureFirst.lastRunSummary, "late success");
+
+    await t.store.create({ id: "complete-first", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }] });
+    await ingestWorkerEvent(t.store, "complete-first", "r", { type: "complete", goalId: "complete-first", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "success", summary: "done" });
+    await ingestWorkerEvent(t.store, "complete-first", "r", { type: "decision", goalId: "complete-first", runId: "r", timestamp: "2026-01-01T00:00:01Z", decision: { id: "late-decision", goalId: "complete-first", runId: "r", prompt: "Late decision", options: [{ id: "x", label: "X" }], createdAt: "", status: "pending", required: true } });
+    const completeFirst = await t.store.get("complete-first");
+    assert.equal(completeFirst.state, "active");
+    assert.equal(completeFirst.runHistory.at(-1)?.status, "success");
+    assert.equal(completeFirst.pendingDecisions.some((decision) => decision.id === "late-decision"), false);
   } finally {
     await t.cleanup();
   }
@@ -427,14 +454,15 @@ test("worker stdout events are serialized in emission order", async () => {
         "-e",
         [
           "console.log(JSON.stringify({type:'progress', message:'one'}));",
-          "console.log(JSON.stringify({type:'decision', decision:{id:'d', prompt:'Pick', options:[{id:'x', label:'X'}]}}));",
+          "console.log(JSON.stringify({type:'progress', message:'two'}));",
           "console.log(JSON.stringify({type:'complete', status:'success', summary:'done'}));",
         ].join(""),
       ],
     });
     const updated = await t.store.get("g");
-    assert.equal(updated.pendingDecisions.some((decision) => decision.id === "d"), true);
     assert.equal(updated.lastRunSummary, "done");
+    const events = (await readFile(t.store.paths.eventsFile("g"), "utf8")).trim().split("\n").map((line) => JSON.parse(line) as { type?: string; message?: string; summary?: string });
+    assert.deepEqual(events.map((event) => event.message ?? event.summary), ["one", "two", "done"]);
   } finally {
     await t.cleanup();
   }
@@ -730,6 +758,33 @@ test("worker timeout without terminal event remains failure", async () => {
   }
 });
 
+test("terminal event emitted after timeout does not override timeout", async () => {
+  const t = await tempStore();
+  try {
+    const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
+    await launchWorker(t.store, goal, "", {
+      command: process.execPath,
+      args: [
+        "-e",
+        [
+          "process.on('SIGTERM', () => {",
+          "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'late success'}) + '\\n', () => setTimeout(() => process.exit(0), 50));",
+          "});",
+          "setInterval(() => {}, 1000);",
+        ].join(""),
+      ],
+      timeoutMs: 20,
+    });
+    const updated = await t.store.get("g");
+    assert.equal(updated.state, "failed");
+    assert.equal(updated.runHistory.at(-1)?.status, "timeout");
+    assert.match(updated.latestProgress ?? "", /Worker timed out/);
+    assert.notEqual(updated.lastRunSummary, "late success");
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("stale-context-like stderr after completion is recorded only as diagnostic", async () => {
   const t = await tempStore();
   try {
@@ -740,8 +795,7 @@ test("stale-context-like stderr after completion is recorded only as diagnostic"
         "-e",
         [
           "process.stdout.write(JSON.stringify({type:'complete', status:'success', summary:'done'}) + '\\n', () => {",
-          "process.stderr.write('Error: This extension ctx is stale after session replacement\\n');",
-          "process.exit(1);",
+          "process.stderr.write('Error: This extension ctx is stale after session replacement\\n', () => process.exit(1));",
           "});",
         ].join(""),
       ],
@@ -831,11 +885,14 @@ test("worker close fallback resolves even when state writes and reads fail", asy
 test("stale completion does not advance handled timestamps", async () => {
   const t = await tempStore();
   try {
-    await t.store.create({ id: "g", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }], github: { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] } });
-    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "stale", summary: "stale", addressedThreadIds: ["t1"] });
-    assert.equal((await t.store.get("g")).github?.lastHandledAt, undefined);
-    await ingestWorkerEvent(t.store, "g", "r", { type: "complete", goalId: "g", runId: "r", timestamp: "2026-01-01T00:00:01Z", status: "success", summary: "done", addressedThreadIds: ["t1"] });
-    const updated = await t.store.get("g");
+    const github = { repository: { owner: "o", repo: "r" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] };
+    await t.store.create({ id: "stale", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }], github });
+    await ingestWorkerEvent(t.store, "stale", "r", { type: "complete", goalId: "stale", runId: "r", timestamp: "2026-01-01T00:00:00Z", status: "stale", summary: "stale", addressedThreadIds: ["t1"] });
+    assert.equal((await t.store.get("stale")).github?.lastHandledAt, undefined);
+
+    await t.store.create({ id: "success", type: "github_pr_review", state: "running", summary: "g", schedule: defaultSchedule(), runHistory: [{ id: "r", startedAt: "", status: "running" }], github });
+    await ingestWorkerEvent(t.store, "success", "r", { type: "complete", goalId: "success", runId: "r", timestamp: "2026-01-01T00:00:01Z", status: "success", summary: "done", addressedThreadIds: ["t1"] });
+    const updated = await t.store.get("success");
     assert.equal(updated.github?.lastHandledAt, "2026-01-01T00:00:01Z");
     assert.deepEqual(updated.github?.handledThreadIds, ["t1"]);
   } finally {

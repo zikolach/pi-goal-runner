@@ -72,12 +72,14 @@ export async function startWorker(store: GoalStore, goal: GoalRecord, prompt: st
       }
     };
     const enqueueEvent = (event: GoalEvent, forcedStatus?: RunSummary["status"]) => {
-      const emittedTerminalType = event.type === "complete" || event.type === "failure" || event.type === "decision" ? event.type : undefined;
+      const emittedTerminalType = terminalEventType(event);
+      const terminalEventAfterTimeout = Boolean(emittedTerminalType && timedOut && !authoritativeTerminalEventType && forcedStatus !== "timeout");
+      if (terminalEventAfterTimeout) return ingestionQueue;
       ingestionQueue = ingestionQueue.catch(() => undefined).then(async () => {
         try {
           const acceptedTerminalEvent = await ingestWorkerEvent(store, goal.id, runId, event, forcedStatus);
-          if (emittedTerminalType && acceptedTerminalEvent) authoritativeTerminalEventType = emittedTerminalType;
-          if (event.type === "complete" && event.status === "success") await options.onComplete?.(event);
+          if (emittedTerminalType && acceptedTerminalEvent && !authoritativeTerminalEventType) authoritativeTerminalEventType = emittedTerminalType;
+          if (event.type === "complete" && event.status === "success" && acceptedTerminalEvent) await options.onComplete?.(event);
         } catch (error) {
           ingestionFailures.push(redactText(error instanceof Error ? error.message : String(error), 1_000));
         }
@@ -227,9 +229,7 @@ export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId:
   let acceptedTerminalEvent = false;
   await appendGoalEvent(store.paths, event);
   await store.update(goalId, (goal) => {
-    if (event.type === "failure" && hasTerminalRun(goal, runId)) {
-      return { ...goal, latestProgress: goal.latestProgress ?? event.message };
-    }
+    if (terminalEventType(event) && hasTerminalRun(goal, runId)) return goal;
     const runHistory = goal.runHistory.map((run) => {
       if (run.id !== runId) return run;
       if (event.type === "complete") return { ...run, completedAt: event.timestamp, status: event.status === "stale" ? "failed" as const : "success" as const, summary: event.summary, commitSha: event.commitSha, validationResults: event.validationResults };
@@ -260,6 +260,10 @@ export async function ingestWorkerEvent(store: GoalStore, goalId: string, runId:
     return { ...goal, runHistory, latestProgress: event.message };
   });
   return acceptedTerminalEvent;
+}
+
+function terminalEventType(event: GoalEvent): "complete" | "failure" | "decision" | undefined {
+  return event.type === "complete" || event.type === "failure" || event.type === "decision" ? event.type : undefined;
 }
 
 function hasTerminalRun(goal: GoalRecord, runId: string): boolean {
