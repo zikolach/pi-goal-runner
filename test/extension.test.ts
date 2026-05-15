@@ -98,4 +98,5 @@ test("daemon suggestion helper only recommends for goals the daemon can check", 
   );
   assert.match(buildDaemonSuggestionMessage(2), /2 active goals/);
   assert.match(buildDaemonSuggestionMessage(1), /1 active goal\)/);
+  assert.match(buildDaemonSuggestionMessage(1), /npm run goal -- daemon/);
 });

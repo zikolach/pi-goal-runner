@@ -33,7 +33,7 @@ export function shouldSuggestDaemon(goals) {
     return goals.some(isDaemonEligibleGoal);
 }
 export function buildDaemonSuggestionMessage(activeCount) {
-    return `Goal runner extension stops when the session exits (${activeCount} active goal${activeCount === 1 ? "" : "s"}). Run \`pi-goal-runner daemon\` to keep checking in background.`;
+    return `Goal runner extension stops when the session exits (${activeCount} active goal${activeCount === 1 ? "" : "s"}). Run \`npm run goal -- daemon\` from the pi-goal-runner checkout to keep checking in background.`;
 }
 function isDaemonEligibleGoal(goal) {
     return !isTerminal(goal.state)
@@ -103,8 +103,18 @@ export default function goalRunnerExtension(pi) {
         try {
             const goals = await store.list();
             const active = goals.filter(isDaemonEligibleGoal);
-            if (active.length > 0)
-                ctx.ui.notify(buildDaemonSuggestionMessage(active.length), "info");
+            if (active.length > 0) {
+                const message = buildDaemonSuggestionMessage(active.length);
+                try {
+                    ctx.ui.notify(message, "info");
+                }
+                catch {
+                    // ignore
+                }
+                // session shutdown can tear down UI before notifications render;
+                // write to stderr as a reliable fallback.
+                process.stderr.write(`${message}\n`);
+            }
         }
         catch {
             // Best effort only; session is shutting down.
@@ -113,19 +123,14 @@ export default function goalRunnerExtension(pi) {
     async function refreshWidget(ctx) {
         const goals = await store.list();
         const active = goals.filter((goal) => !isTerminal(goal.state)).length;
-        const daemonEligible = goals.filter(isDaemonEligibleGoal).length;
         const decisions = goals.reduce((count, goal) => count + goal.pendingDecisions.filter((decision) => decision.status === "pending").length, 0);
         ctx.ui.setStatus?.("goals", active ? `goals:${active}${decisions ? ` decisions:${decisions}` : ""}` : undefined);
-        if (!active) {
-            ctx.ui.setWidget?.("goals", undefined);
-            return;
+        if (decisions) {
+            ctx.ui.setWidget?.("goals", [`${decisions} goal decision(s) pending. Run /goal decisions.`]);
         }
-        const lines = [];
-        if (decisions)
-            lines.push(`${decisions} goal decision(s) pending. Run /goal decisions.`);
-        if (daemonEligible > 0)
-            lines.push("Tip: run `pi-goal-runner daemon` before exiting Pi to keep goal checks running in background.");
-        ctx.ui.setWidget?.("goals", lines.length ? lines : undefined);
+        else {
+            ctx.ui.setWidget?.("goals", undefined);
+        }
     }
 }
 //# sourceMappingURL=extension.js.map
