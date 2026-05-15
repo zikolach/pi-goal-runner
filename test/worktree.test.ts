@@ -428,6 +428,28 @@ test("reused worktree resets branch to fetched remote revision", async () => {
   }
 });
 
+test("worktree reuse fetches only the selected remote", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-single-remote`);
+  const repoPath = path.join(root, "repo");
+  const remotePath = path.join(root, "remote.git");
+  const worktreePath = path.join(root, "state", "worktrees", "wt");
+  try {
+    await createRepo(repoPath);
+    await execFileAsync("git", ["-C", repoPath, "branch", "feature"]);
+    await execFileAsync("git", ["init", "--bare", remotePath]);
+    await execFileAsync("git", ["-C", repoPath, "remote", "add", "origin", remotePath]);
+    await execFileAsync("git", ["-C", repoPath, "push", "-u", "origin", "feature"]);
+    await createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "feature");
+    await execFileAsync("git", ["-C", repoPath, "remote", "add", "broken", path.join(root, "missing-remote.git")]);
+
+    await createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "feature");
+
+    assert.equal(await readFile(path.join(worktreePath, "file.txt"), "utf8"), "data");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("worktree reuse surfaces fetch failures without falling through to creation", async () => {
   const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-fetch`);
   const repoPath = path.join(root, "repo");
@@ -437,7 +459,10 @@ test("worktree reuse surfaces fetch failures without falling through to creation
     await execFileAsync("git", ["-C", repoPath, "worktree", "add", worktreePath]);
     await execFileAsync("git", ["-C", worktreePath, "remote", "add", "broken", path.join(root, "missing-remote.git")]);
 
-    await assert.rejects(() => createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "main"), /Could not refresh isolated worktree/);
+    await assert.rejects(
+      () => createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, { branch: "missing-branch", remote: "broken" }),
+      /Could not refresh isolated worktree/,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

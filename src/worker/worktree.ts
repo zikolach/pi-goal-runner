@@ -22,6 +22,10 @@ export interface CreateWorktreeOptions {
   remote?: string;
 }
 
+interface ResolveRevisionOptions {
+  allowFetch: boolean;
+}
+
 export interface PreparedWorktree {
   path: string;
   mode: WorktreeMode;
@@ -113,8 +117,7 @@ export async function createOrReuseWorktree(paths: StatePaths, repoPath: string,
   }
   await prepareWorktreePath(worktreePath);
   try {
-    if (options.observedHeadSha || options.branch) await fetchRepositoryIfConfigured(repoPath);
-    const revision = await resolveCheckoutRevision(repoPath, options);
+    const revision = await resolveCheckoutRevision(repoPath, options, { allowFetch: true });
     await execFileAsync("git", ["-C", repoPath, "worktree", "add", "--detach", worktreePath, "--", revision], { maxBuffer: 10 * 1024 * 1024 });
     const headSha = await resolveCommitish(worktreePath, "HEAD").catch(() => undefined);
     return { path: worktreePath, mode: "isolated", headSha, pushRemote, pushBranch: options.branch };
@@ -126,8 +129,7 @@ export async function createOrReuseWorktree(paths: StatePaths, repoPath: string,
 async function updateExistingWorktree(worktreePath: string, options: CreateWorktreeOptions): Promise<string | undefined> {
   try {
     await assertWorktreeClean(worktreePath);
-    if (options.observedHeadSha || options.branch) await fetchRepositoryIfConfigured(worktreePath);
-    const revision = await resolveCheckoutRevision(worktreePath, options);
+    const revision = await resolveCheckoutRevision(worktreePath, options, { allowFetch: true });
     await execFileAsync("git", ["-C", worktreePath, "checkout", "--detach", revision], { maxBuffer: 10 * 1024 * 1024 });
     await execFileAsync("git", ["-C", worktreePath, "reset", "--hard", revision], { maxBuffer: 10 * 1024 * 1024 });
     return resolveCommitish(worktreePath, "HEAD").catch(() => undefined);
@@ -136,14 +138,18 @@ async function updateExistingWorktree(worktreePath: string, options: CreateWorkt
   }
 }
 
-async function fetchRepositoryIfConfigured(repoPath: string): Promise<void> {
-  if (!await hasConfiguredRemotes(repoPath)) return;
-  await execFileAsync("git", ["-C", repoPath, "fetch", "--all", "--prune"], { maxBuffer: 10 * 1024 * 1024 });
+async function fetchRepositoryIfConfigured(repoPath: string, remote: string): Promise<void> {
+  if (!await hasConfiguredRemote(repoPath, remote)) return;
+  await execFileAsync("git", ["-C", repoPath, "fetch", "--prune", remote], { maxBuffer: 10 * 1024 * 1024 });
 }
 
-async function hasConfiguredRemotes(repoPath: string): Promise<boolean> {
-  const { stdout } = await execFileAsync("git", ["-C", repoPath, "remote"], { maxBuffer: 1024 * 1024 });
-  return stdout.trim().length > 0;
+async function hasConfiguredRemote(repoPath: string, remote: string): Promise<boolean> {
+  try {
+    await execFileAsync("git", ["-C", repoPath, "remote", "get-url", remote], { maxBuffer: 1024 * 1024 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function assertWorktreeClean(worktreePath: string): Promise<void> {
@@ -151,13 +157,20 @@ async function assertWorktreeClean(worktreePath: string): Promise<void> {
   if (stdout.trim()) throw new Error(`isolated worktree has uncommitted or untracked changes; inspect or clean ${worktreePath} before retrying`);
 }
 
-async function resolveCheckoutRevision(repoPath: string, options: CreateWorktreeOptions): Promise<string> {
+async function resolveCheckoutRevision(repoPath: string, options: CreateWorktreeOptions, resolveOptions: ResolveRevisionOptions): Promise<string> {
+  const remote = options.remote ?? DEFAULT_PUSH_REMOTE;
   if (options.observedHeadSha) {
     const observed = await resolveCommitish(repoPath, options.observedHeadSha).catch(() => undefined);
     if (observed) return observed;
+    if (resolveOptions.allowFetch) {
+      await fetchRepositoryIfConfigured(repoPath, remote);
+      const fetchedObserved = await resolveCommitish(repoPath, options.observedHeadSha).catch(() => undefined);
+      if (fetchedObserved) return fetchedObserved;
+    }
   }
   if (options.branch) {
-    const remoteBranch = await resolveCommitish(repoPath, `refs/remotes/${options.remote ?? DEFAULT_PUSH_REMOTE}/${options.branch}`).catch(() => undefined);
+    if (resolveOptions.allowFetch) await fetchRepositoryIfConfigured(repoPath, remote);
+    const remoteBranch = await resolveCommitish(repoPath, `refs/remotes/${remote}/${options.branch}`).catch(() => undefined);
     if (remoteBranch) return remoteBranch;
     return resolveCommitish(repoPath, options.branch);
   }

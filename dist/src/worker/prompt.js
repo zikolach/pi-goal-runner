@@ -9,7 +9,7 @@ export function buildWorkerPrompt(goal, observation, actionable) {
     const pushRemote = goal.github.repository.pushRemote ?? "origin";
     const worktreeMode = goal.github.repository.worktreeMode ?? "isolated";
     const checkoutDescription = worktreeMode === "same_path" ? "user checkout (explicit same-path mode)" : "isolated detached worktree";
-    const observedHeadSha = goal.github.repository.worktreeHeadSha ?? observation.headSha ?? "unknown";
+    const worktreeHeadSha = goal.github.repository.worktreeHeadSha ?? observation.headSha ?? "unknown";
     const pushTarget = branch === "unknown" ? "unknown; ask for guidance before pushing" : `${pushRemote} HEAD:${branch}`;
     const pushInstruction = branch === "unknown"
         ? "If the push target is unknown, emit a decision instead of guessing."
@@ -25,7 +25,7 @@ Goal:
 - PR branch / push branch: ${branch}
 - Worker checkout: ${checkoutDescription}
 - Worktree: ${goal.github.repository.worktreePath ?? "not assigned"}
-- Checked-out worktree HEAD: ${observedHeadSha}
+- Checked-out worktree HEAD: ${worktreeHeadSha}
 - Push remote: ${pushRemote}
 - Push destination: ${pushTarget}
 - Quiet window: ${goal.schedule.quietWindow.durationMs}ms
