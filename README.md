@@ -32,7 +32,7 @@ The package registers a `/goal` Pi command and a `pi-goal-runner` CLI after buil
 
 ## Interactive Goal Manager
 
-`/goals` opens a modal goal manager in interactive Pi sessions. `/goal ui` is also supported as an alias.
+`/goals` opens a modal, table-style goal manager in interactive Pi sessions. `/goal ui` is also supported as an alias.
 
 Keybindings:
 - `↑` / `↓`: navigate goal list

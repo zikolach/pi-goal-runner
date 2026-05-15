@@ -139,6 +139,15 @@ export default function goalRunnerExtension(pi) {
                 done(result);
             });
             return component;
+        }, {
+            overlay: true,
+            overlayOptions: {
+                anchor: "center",
+                width: "85%",
+                minWidth: 64,
+                maxHeight: "90%",
+                margin: 1,
+            },
         });
     }
     pi.on?.("session_start", async (_event, ctx) => {

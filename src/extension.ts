@@ -32,12 +32,12 @@ interface ExtensionContext {
       theme: unknown,
       _keybindings: unknown,
       done: (result: unknown) => void,
-    ) => GoalManagerWidget | Promise<GoalManagerWidget>) => unknown | Promise<unknown>;
-    options?: {
+    ) => GoalManagerWidget | Promise<GoalManagerWidget>,
+      options?: {
       overlay?: boolean;
       overlayOptions?: unknown;
       onHandle?: (handle: unknown) => void;
-    },
+      }) => unknown | Promise<unknown>;
   };
 }
 
@@ -186,6 +186,15 @@ export default function goalRunnerExtension(pi: ExtensionAPI): void {
         },
       );
       return component;
+    }, {
+      overlay: true,
+      overlayOptions: {
+        anchor: "center",
+        width: "85%",
+        minWidth: 64,
+        maxHeight: "90%",
+        margin: 1,
+      },
     });
   }
 

@@ -21,12 +21,11 @@ interface ExtensionContext {
         setWidget?(key: string, lines: string[] | undefined): void;
         custom?: (factory: (tui: {
             requestRender(): void;
-        }, theme: unknown, _keybindings: unknown, done: (result: unknown) => void) => GoalManagerWidget | Promise<GoalManagerWidget>) => unknown | Promise<unknown>;
-        options?: {
+        }, theme: unknown, _keybindings: unknown, done: (result: unknown) => void) => GoalManagerWidget | Promise<GoalManagerWidget>, options?: {
             overlay?: boolean;
             overlayOptions?: unknown;
             onHandle?: (handle: unknown) => void;
-        };
+        }) => unknown | Promise<unknown>;
     };
 }
 interface ExtensionCommandContext extends ExtensionContext {

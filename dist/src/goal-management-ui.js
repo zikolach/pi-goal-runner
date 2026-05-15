@@ -6,7 +6,11 @@ function normalizeKey(data) {
         return "up";
     if (data === "\u001b[B")
         return "down";
-    if (data === "\u001b" || trimmed === "esc" || trimmed === "escape")
+    if (data === "\u001b")
+        return "escape";
+    if (trimmed === "esc" || trimmed === "escape")
+        return "escape";
+    if (trimmed.length === 1 && trimmed.charCodeAt(0) === 27)
         return "escape";
     if (data === "\r" || data === "\n" || trimmed.toLowerCase() === "enter")
         return "enter";
@@ -43,10 +47,74 @@ function buildActionHints(goal) {
         hints.push("n:run now");
     return hints;
 }
-function buildSummaryLine(goal) {
-    const summary = `${goal.state} ${goal.id} ${goalTargetLine(goal)} next:${goal.schedule.nextCheckAt}`;
-    const hints = buildActionHints(goal);
-    return hints.length ? `${summary} [${hints.join(" | ")}]` : summary;
+function renderCell(value, width) {
+    const normalized = truncateLine(String(value), width);
+    return normalized.padEnd(width, " ");
+}
+function renderRows(headers, rows, width, shrinkOrder = []) {
+    if (!headers.length)
+        return [];
+    const columnCount = headers.length;
+    const separatorWidth = Math.max(0, columnCount - 1) * 3;
+    const contentWidth = Math.max(1, width - separatorWidth);
+    const columns = headers.map((header) => Math.max(1, header.length));
+    for (const row of rows) {
+        for (let index = 0; index < columnCount; index++) {
+            const cell = row[index] ?? "";
+            columns[index] = Math.max(columns[index], Math.min(cell.length, contentWidth));
+        }
+    }
+    let total = columns.reduce((sum, value) => sum + value, 0);
+    if (total > contentWidth) {
+        let overflow = total - contentWidth;
+        const order = shrinkOrder.length ? shrinkOrder : Array.from({ length: columnCount }, (_, index) => index);
+        while (overflow > 0) {
+            let changed = false;
+            for (const index of order) {
+                if (overflow <= 0)
+                    break;
+                if (columns[index] > 1) {
+                    columns[index] -= 1;
+                    overflow -= 1;
+                    changed = true;
+                }
+            }
+            if (!changed) {
+                break;
+            }
+        }
+        total = columns.reduce((sum, value) => sum + value, 0);
+        if (total > contentWidth) {
+            const fallback = Math.max(1, Math.floor(contentWidth / columnCount));
+            for (let index = 0; index < columnCount; index++)
+                columns[index] = fallback;
+            let extra = contentWidth - fallback * columnCount;
+            for (let index = 0; index < columnCount && extra > 0; index++) {
+                columns[index] += 1;
+                extra -= 1;
+            }
+        }
+    }
+    const renderRow = (cells) => {
+        return cells
+            .map((cell, index) => renderCell(cell, columns[index] ?? 1))
+            .join(" | ");
+    };
+    return [
+        renderRow(headers),
+        columns.map((columnWidth) => "─".repeat(Math.max(1, columnWidth))).join("─┼─"),
+        ...rows.map((row) => renderRow(row)),
+    ].map((line) => truncateLine(line, contentWidth));
+}
+function toDialogLines(lines, width) {
+    if (width <= 2) {
+        return lines.map((line) => truncateLine(line, width));
+    }
+    const innerWidth = Math.max(1, width - 2);
+    const top = `╭${"─".repeat(innerWidth)}╮`;
+    const bottom = `╰${"─".repeat(innerWidth)}╯`;
+    const body = lines.map((line) => `│${truncateLine(line, innerWidth).padEnd(innerWidth, " ")}│`);
+    return [top, ...body, bottom];
 }
 export class GoalManagerDialog {
     callbacks;
@@ -66,17 +134,18 @@ export class GoalManagerDialog {
         if (this.view === "confirm-cancel" && this.selectedGoal) {
             const goal = this.selectedGoal;
             const prompt = this.confirm ?? { prompt: `Cancel ${goal.id}?`, yesHint: "y", noHint: "n/esc" };
-            return [
+            return toDialogLines([
                 truncateLine(`Cancel goal ${goal.id}`, width),
                 truncateLine(prompt.prompt, width),
                 truncateLine(`Yes=${prompt.yesHint}, No=${prompt.noHint}`, width),
                 "",
                 truncateLine("y:confirm • n/esc:keep", width),
-            ];
+            ], width);
         }
+        const contentWidth = Math.max(1, width - 2);
         if (this.view === "list")
-            return this.renderList(width);
-        return this.renderDetail(width);
+            return toDialogLines(this.renderList(contentWidth), width);
+        return toDialogLines(this.renderDetail(contentWidth), width);
     }
     handleInput(data) {
         const key = normalizeKey(data);
@@ -216,17 +285,27 @@ export class GoalManagerDialog {
         await this.reloadSelectedGoal();
     }
     renderList(width) {
-        const lines = ["", truncateLine("Goal manager", width), ""];
+        const lines = ["Goal manager", ""];
         if (!this.goals.length) {
             lines.push(truncateLine("No goals found.", width));
             lines.push(truncateLine("Press r to refresh, q/esc to close.", width));
             return lines;
         }
-        lines.push(truncateLine("↑/↓:move  enter:detail  r:refresh  q/esc:close", width));
-        for (const [index, goal] of this.goals.entries()) {
-            const line = `${index === this.selectedIndex ? ">" : " "} ${buildSummaryLine(goal)}`;
-            lines.push(truncateLine(line, width));
-        }
+        const headers = ["Sel", "ID", "State", "Target", "Next check", "Actions"];
+        const rows = this.goals.map((goal, index) => {
+            const hints = buildActionHints(goal);
+            return [
+                index === this.selectedIndex ? ">" : " ",
+                goal.id,
+                goal.state,
+                goalTargetLine(goal),
+                goal.schedule.nextCheckAt,
+                hints.length ? hints.join(",") : "(none)",
+            ];
+        });
+        lines.push("");
+        lines.push(...renderRows(headers, rows, width, [5, 4, 3, 2, 1, 0]));
+        lines.push("", truncateLine("↑/↓:move  enter:detail  r:refresh  q/esc:close", width));
         return lines;
     }
     renderDetail(width) {
@@ -234,23 +313,22 @@ export class GoalManagerDialog {
         if (!goal)
             return this.renderList(width);
         const hints = buildActionHints(goal);
-        const lines = [];
-        const display = getGoalDisplayMetadata(goal);
-        const lastRun = fallbackText(goal.lastRunSummary ?? goal.runHistory.at(-1)?.summary, "none");
-        lines.push(truncateLine(`Goal ${goal.id}`, width));
-        lines.push(truncateLine(`State: ${goal.state}`, width));
-        lines.push(truncateLine(`Type: ${goal.type}`, width));
-        lines.push(truncateLine(`Summary: ${fallbackText(goal.summary, "")}`, width));
-        lines.push(truncateLine(`Target: ${fallbackText(display.target, goal.summary)}`, width));
-        lines.push(truncateLine(`Worktree: ${fallbackText(display.workspace, "none")}`, width));
-        lines.push(truncateLine(`Next check: ${fallbackText(goal.schedule.nextCheckAt, "none")}`, width));
-        lines.push(truncateLine(`Latest progress: ${fallbackText(goal.latestProgress, "none")}`, width));
-        lines.push(truncateLine(`Last run: ${fallbackText(lastRun, "none")}`, width));
-        lines.push(truncateLine(`Pending decisions: ${goal.pendingDecisions.filter((decision) => decision.status === "pending").length}`, width));
-        lines.push(truncateLine(`Actions: ${hints.length ? hints.join(" | ") : "(none)"}`, width));
-        lines.push(truncateLine(`Detail: b/esc back  r refresh  ${hints.join("  ")}`, width));
-        if (hints.length)
-            lines.push(truncateLine(`p:pause/resume  c:cancel  n:run now`, width));
+        const lines = ["", `Goal ${goal.id}`, ""];
+        const table = [
+            ["State", goal.state],
+            ["Type", goal.type],
+            ["Summary", fallbackText(goal.summary, "")],
+            ["Target", goalTargetLine(goal)],
+            ["Worktree", fallbackText(getGoalDisplayMetadata(goal).workspace, "none")],
+            ["Next check", fallbackText(goal.schedule.nextCheckAt, "none")],
+            ["Latest progress", fallbackText(goal.latestProgress, "none")],
+            ["Last run", fallbackText(goal.lastRunSummary ?? goal.runHistory.at(-1)?.summary, "none")],
+            ["Pending decisions", String(goal.pendingDecisions.filter((decision) => decision.status === "pending").length)],
+            ["Actions", hints.length ? hints.join(",") : "(none)"],
+        ];
+        lines.push(...renderRows(["Property", "Value"], table, width, [1, 0]));
+        lines.push("");
+        lines.push(truncateLine("b/esc back  r refresh  p:pause/resume  c:cancel  n:run now", width));
         return lines;
     }
     get selectedGoal() {

@@ -85,10 +85,29 @@ test("goal manager renders empty list view with close hint", () => {
   callbacks.loadGoal = async () => undefined;
   const dialog = new GoalManagerDialog([], callbacks, () => {}, () => {});
   const lines = dialog.render(40);
-  assert.equal(lines.includes(""), true);
   assert.equal(lines.some((line) => line.includes("No goals found.")), true);
   assert.equal(lines.some((line) => line.includes("Press r to refresh, q/esc to close.")), true);
   assert.equal(lines.every((line) => line.length <= 40), true);
+  assert.equal(lines[0].startsWith("╭") && lines[0].endsWith("╮"), true);
+});
+
+test("goal manager treats raw escape input as back/close", () => {
+  let closed = 0;
+  const dialog = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {
+    closed += 1;
+  });
+  dialog.handleInput("\u001b");
+  assert.equal(closed, 1);
+
+  let detailClosed = 0;
+  const dialogWithDetail = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {
+    detailClosed += 1;
+  });
+  dialogWithDetail.handleInput("enter");
+  dialogWithDetail.handleInput("\u001b");
+  const detailLines = dialogWithDetail.render(40);
+  assert.equal(detailClosed, 0);
+  assert.equal(detailLines.some((line) => line.includes("Goal manager")), true);
 });
 
 test("goal manager supports empty-line width-safe rendering for long values", () => {
@@ -112,9 +131,19 @@ test("goal manager renders list and detail views with expected fields and action
   assert.equal(listLines.some((line) => line.includes("goal-active")), true);
   dialog.handleInput("enter");
   const detailLines = dialog.render(120);
-  assert.equal(detailLines.some((line) => line.includes("State: active")), true);
+  assert.equal(detailLines.some((line) => line.includes("State") && line.includes("active")), true);
   assert.equal(detailLines.some((line) => line.includes("Latest progress")), true);
-  assert.equal(detailLines.some((line) => line.includes("Actions:")), true);
+  assert.equal(detailLines.some((line) => line.includes("Actions")), true);
+});
+
+test("goal manager uses table layout for list and detail", () => {
+  const dialog = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {});
+  const listLines = dialog.render(120);
+  assert.equal(listLines.some((line) => line.includes("Sel") && line.includes("Target") && line.includes("|") && line.includes("Actions")), true);
+
+  dialog.handleInput("enter");
+  const detailLines = dialog.render(120);
+  assert.equal(detailLines.some((line) => line.includes("Property") && line.includes("Value") && line.includes("|")), true);
 });
 
 test("goal manager refresh actions do not call action callbacks", async () => {
@@ -150,7 +179,7 @@ test("goal manager shows and handles cancellation confirmation and abort without
   dialog.handleInput("n");
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(counters.cancel, 0);
-  assert.equal(dialog.render(80).some((line) => line.includes("State: active")), true);
+  assert.equal(dialog.render(80).some((line) => line.includes("State") && line.includes("active")), true);
 
   dialog.handleInput("c");
   dialog.handleInput("enter");
@@ -171,7 +200,7 @@ for (const [state, expected] of [
     const dialog = new GoalManagerDialog([makeGoal({ id: `goal-${state}`, state })], createCallbacks().callbacks, () => {}, () => {});
     dialog.handleInput("enter");
     const lines = dialog.render(120);
-    const actions = lines.find((line) => line.startsWith("Actions:")) ?? "";
+    const actions = lines.find((line) => line.includes("Actions")) ?? "";
     assert.ok(actions.includes(expected), `${state} actions mismatch: ${actions}`);
   });
 }
