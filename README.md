@@ -114,7 +114,7 @@ The repository currently contains PR-specific fields and modules because GitHub 
 - Goal state is stored outside the LLM transcript under `~/.pi/agent/goals` by default.
 - State contains structured summaries, timestamps, decisions, and run metadata. It must not contain credentials, bot tokens, or full transcripts.
 - Subprocess workers run with your local user permissions.
-- Repository-mutating goals use a dedicated git worktree recorded in the goal state.
+- Repository-mutating goals use an isolated git worktree recorded in the goal state by default; same-path execution must be explicitly configured in goal metadata.
 - Automatic GitHub reply/resolve is opt-in with `--auto-resolve` and requires pushed commit evidence from a worker completion event.
 - Notification sinks are optional; failures are recorded as nonfatal events and decisions remain pending.
 
@@ -135,6 +135,14 @@ pi-goal-runner daemon
 # or one tick
 pi-goal-runner tick
 ```
+
+### Worker worktrees
+
+GitHub PR workers are prepared in per-goal linked worktrees under the state root, for example `~/.pi/agent/goals/worktrees/<goal-id>`. These worktrees are checked out in detached HEAD mode at the observed PR head (or a safe local revision when the observed SHA is unavailable). Detached checkout avoids Git's "branch already checked out" restriction and keeps daemon-triggered edits away from your active repository checkout.
+
+The worker prompt carries push-target metadata separately from checkout state: repository owner/name, push remote, target PR branch, current worktree path, and checked-out head SHA. When a worker fixes a PR from detached HEAD, it is instructed to push with `git push <remote> HEAD:<branch>` without force by default and to report the pushed commit SHA in its completion event.
+
+Reusable isolated worktrees are refreshed before launch. If an isolated worktree contains uncommitted tracked or untracked files, the scheduler records a retryable failure instead of resetting or deleting those changes. If a stored worktree path points at the user's active checkout, it is migrated back to the managed per-goal worktree on the next run unless the goal explicitly opts into `same_path` mode. Manual cleanup can use normal Git commands such as `git worktree list`, `git worktree remove <path>`, and `git worktree prune`.
 
 Worker execution uses `pi --print` by default and sends the explicit goal prompt on stdin. Override with:
 
@@ -161,5 +169,5 @@ Decision requests remain durable even when notification delivery fails.
 npm install
 npm run typecheck
 npm test
-openspec validate add-goal-runner-extension --strict
+npm run openspec:validate
 ```

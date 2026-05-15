@@ -21,6 +21,11 @@ async function createRepo(repoPath: string): Promise<void> {
   await execFileAsync("git", ["-C", repoPath, "commit", "-m", "initial"]);
 }
 
+async function headSha(repoPath: string): Promise<string> {
+  const { stdout } = await execFileAsync("git", ["-C", repoPath, "rev-parse", "HEAD"]);
+  return stdout.trim();
+}
+
 test("worktree creation fails safely for non-empty invalid path", async () => {
   const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}`);
   const worktreePath = path.join(root, "worktree");
@@ -133,6 +138,134 @@ test("ensureGoalWorktree resets recorded sibling worktree paths", async () => {
   }
 });
 
+test("ensureGoalWorktree creates a detached isolated worktree when the PR branch is checked out", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-checked-out`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const store = createGoalStore(statePath);
+  try {
+    await createRepo(repoPath);
+    await execFileAsync("git", ["-C", repoPath, "checkout", "-b", "feature"]);
+    const observedHeadSha = await headSha(repoPath);
+    const goal = await store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r", localPath: repoPath, branch: "feature" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    const updated = await ensureGoalWorktree(store, goal, { observedHeadSha });
+    const { stdout: checkedOutBranch } = await execFileAsync("git", ["-C", updated.github?.repository.worktreePath ?? "", "branch", "--show-current"]);
+    const { stdout: worktreeHead } = await execFileAsync("git", ["-C", updated.github?.repository.worktreePath ?? "", "rev-parse", "HEAD"]);
+
+    assert.equal(updated.github?.repository.worktreePath, store.paths.worktreeDir("g"));
+    assert.equal(updated.github?.repository.worktreeMode, "isolated");
+    assert.equal(updated.github?.repository.worktreeHeadSha, observedHeadSha);
+    assert.equal(updated.github?.repository.pushRemote, "origin");
+    assert.equal(updated.github?.repository.pushBranch, "feature");
+    assert.equal(checkedOutBranch.trim(), "");
+    assert.equal(worktreeHead.trim(), observedHeadSha);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ensureGoalWorktree migrates same-path goals to isolated worktrees by default", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-same-path`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const store = createGoalStore(statePath);
+  try {
+    await createRepo(repoPath);
+    const goal = await store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r", localPath: repoPath, worktreePath: repoPath }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    const updated = await ensureGoalWorktree(store, goal, { observedHeadSha: await headSha(repoPath) });
+
+    assert.equal(updated.github?.repository.worktreePath, store.paths.worktreeDir("g"));
+    assert.equal(updated.github?.repository.worktreeMode, "isolated");
+    assert.notEqual(path.resolve(updated.github?.repository.worktreePath ?? ""), path.resolve(repoPath));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("explicit same-path mode keeps the user checkout", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-explicit-same-path`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const store = createGoalStore(statePath);
+  try {
+    await createRepo(repoPath);
+    const goal = await store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r", localPath: repoPath, worktreeMode: "same_path" }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    const updated = await ensureGoalWorktree(store, goal, { observedHeadSha: await headSha(repoPath) });
+
+    assert.equal(updated.github?.repository.worktreePath, repoPath);
+    assert.equal(updated.github?.repository.worktreeMode, "same_path");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("dirty isolated worktrees fail safely before refresh", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-dirty`);
+  const repoPath = path.join(root, "repo");
+  const worktreePath = path.join(root, "state", "worktrees", "wt");
+  try {
+    await createRepo(repoPath);
+    await createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath);
+    await writeFile(path.join(worktreePath, "untracked.txt"), "do not delete");
+
+    await assert.rejects(() => createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath), /uncommitted or untracked changes/);
+    assert.equal(await readFile(path.join(worktreePath, "untracked.txt"), "utf8"), "do not delete");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("user checkout untracked files do not block isolated worker worktree creation", async () => {
+  const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-user-dirty`);
+  const repoPath = path.join(root, "repo");
+  const statePath = path.join(root, "state");
+  const store = createGoalStore(statePath);
+  try {
+    await createRepo(repoPath);
+    await writeFile(path.join(repoPath, "local-notes.md"), "human work");
+    const goal = await store.create({
+      id: "g",
+      type: "github_pr_review",
+      state: "active",
+      summary: "g",
+      schedule: defaultSchedule(),
+      github: { repository: { owner: "o", repo: "r", localPath: repoPath }, prNumber: 1, validationCommands: [], autoReplyAndResolve: false, handledThreadIds: [], handledCheckNames: [] },
+    });
+
+    const updated = await ensureGoalWorktree(store, goal, { observedHeadSha: await headSha(repoPath) });
+
+    assert.equal(updated.github?.repository.worktreePath, store.paths.worktreeDir("g"));
+    await assert.rejects(() => stat(path.join(store.paths.worktreeDir("g"), "local-notes.md")), /ENOENT/);
+    assert.equal(await readFile(path.join(repoPath, "local-notes.md"), "utf8"), "human work");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("ensureGoalWorktree uses caller timestamp when assigning worktree path", async () => {
   const root = path.join(tmpdir(), `goal-runner-worktree-${Date.now()}-updated-at`);
   const repoPath = path.join(root, "repo");
@@ -227,7 +360,7 @@ test("worktree reuse surfaces fetch failures without falling through to creation
     await execFileAsync("git", ["-C", repoPath, "worktree", "add", worktreePath]);
     await execFileAsync("git", ["-C", worktreePath, "remote", "add", "broken", path.join(root, "missing-remote.git")]);
 
-    await assert.rejects(() => createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "main"), /Could not update existing worktree/);
+    await assert.rejects(() => createOrReuseWorktree(createStatePaths(path.join(root, "state")), repoPath, worktreePath, "main"), /Could not refresh isolated worktree/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
