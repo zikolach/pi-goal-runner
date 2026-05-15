@@ -53,6 +53,49 @@ async function waitForRunStatus(store: ReturnType<typeof createGoalStore>, goalI
   }
 }
 
+type CapturedWorkerTimeout = {
+  delay?: number;
+  cleared: boolean;
+  fire: () => void;
+  unref: () => CapturedWorkerTimeout;
+};
+
+function captureWorkerTimeouts(workerTimeoutMs: number) {
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  const capturedWorkerTimeouts: CapturedWorkerTimeout[] = [];
+
+  globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
+    if (delay !== workerTimeoutMs) return realSetTimeout(callback, delay, ...args) as ReturnType<typeof globalThis.setTimeout>;
+    const handle: CapturedWorkerTimeout = {
+      delay,
+      cleared: false,
+      fire: () => {
+        if (!handle.cleared) callback(...args);
+      },
+      unref: () => handle,
+    };
+    capturedWorkerTimeouts.push(handle);
+    return handle as unknown as ReturnType<typeof globalThis.setTimeout>;
+  }) as unknown as typeof globalThis.setTimeout;
+  globalThis.clearTimeout = ((handle?: ReturnType<typeof globalThis.setTimeout>) => {
+    const captured = handle as unknown as CapturedWorkerTimeout | undefined;
+    if (captured && typeof captured === "object" && "cleared" in captured) {
+      captured.cleared = true;
+      return;
+    }
+    return realClearTimeout(handle as Parameters<typeof realClearTimeout>[0]);
+  }) as unknown as typeof globalThis.clearTimeout;
+
+  return {
+    capturedWorkerTimeouts,
+    restore: () => {
+      globalThis.setTimeout = realSetTimeout;
+      globalThis.clearTimeout = realClearTimeout;
+    },
+  };
+}
+
 test("due selection skips paused/cancelled/waiting goals", async () => {
   const t = await tempStore();
   try {
@@ -725,39 +768,9 @@ test("worker terminal outcome survives diagnostic write failure", async () => {
 
 test("worker timeout after terminal event records only diagnostic", async () => {
   const t = await tempStore();
-  const realSetTimeout = globalThis.setTimeout;
-  const realClearTimeout = globalThis.clearTimeout;
   const workerTimeoutMs = 60_000;
-  type CapturedTimeout = {
-    delay?: number;
-    cleared: boolean;
-    fire: () => void;
-    unref: () => CapturedTimeout;
-  };
-  const capturedWorkerTimeouts: CapturedTimeout[] = [];
+  const { capturedWorkerTimeouts, restore } = captureWorkerTimeouts(workerTimeoutMs);
   try {
-    globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
-      if (delay !== workerTimeoutMs) return realSetTimeout(callback, delay, ...args) as ReturnType<typeof globalThis.setTimeout>;
-      const handle: CapturedTimeout = {
-        delay,
-        cleared: false,
-        fire: () => {
-          if (!handle.cleared) callback(...args);
-        },
-        unref: () => handle,
-      };
-      capturedWorkerTimeouts.push(handle);
-      return handle as unknown as ReturnType<typeof globalThis.setTimeout>;
-    }) as unknown as typeof globalThis.setTimeout;
-    globalThis.clearTimeout = ((handle?: ReturnType<typeof globalThis.setTimeout>) => {
-      const captured = handle as unknown as CapturedTimeout | undefined;
-      if (captured && typeof captured === "object" && "cleared" in captured) {
-        captured.cleared = true;
-        return;
-      }
-      return realClearTimeout(handle as Parameters<typeof realClearTimeout>[0]);
-    }) as unknown as typeof globalThis.clearTimeout;
-
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
     const run = await startWorker(t.store, goal, "", {
       command: process.execPath,
@@ -776,8 +789,7 @@ test("worker timeout after terminal event records only diagnostic", async () => 
     assert.equal(runEvents.some((event) => event.type === "failure"), false);
     assert.equal(runEvents.some((event) => event.type === "diagnostic" && /timed out after terminal complete event/.test(event.message ?? "")), true);
   } finally {
-    globalThis.setTimeout = realSetTimeout;
-    globalThis.clearTimeout = realClearTimeout;
+    restore();
     await t.cleanup();
   }
 });
@@ -845,39 +857,9 @@ test("worker timeout without terminal event remains failure", async () => {
 
 test("terminal event emitted after timeout does not override timeout", async () => {
   const t = await tempStore();
-  const realSetTimeout = globalThis.setTimeout;
-  const realClearTimeout = globalThis.clearTimeout;
   const workerTimeoutMs = 60_000;
-  type CapturedTimeout = {
-    delay?: number;
-    cleared: boolean;
-    fire: () => void;
-    unref: () => CapturedTimeout;
-  };
-  const capturedWorkerTimeouts: CapturedTimeout[] = [];
+  const { capturedWorkerTimeouts, restore } = captureWorkerTimeouts(workerTimeoutMs);
   try {
-    globalThis.setTimeout = ((callback: (...args: unknown[]) => void, delay?: number, ...args: unknown[]) => {
-      if (delay !== workerTimeoutMs) return realSetTimeout(callback, delay, ...args) as ReturnType<typeof globalThis.setTimeout>;
-      const handle: CapturedTimeout = {
-        delay,
-        cleared: false,
-        fire: () => {
-          if (!handle.cleared) callback(...args);
-        },
-        unref: () => handle,
-      };
-      capturedWorkerTimeouts.push(handle);
-      return handle as unknown as ReturnType<typeof globalThis.setTimeout>;
-    }) as unknown as typeof globalThis.setTimeout;
-    globalThis.clearTimeout = ((handle?: ReturnType<typeof globalThis.setTimeout>) => {
-      const captured = handle as unknown as CapturedTimeout | undefined;
-      if (captured && typeof captured === "object" && "cleared" in captured) {
-        captured.cleared = true;
-        return;
-      }
-      return realClearTimeout(handle as Parameters<typeof realClearTimeout>[0]);
-    }) as unknown as typeof globalThis.clearTimeout;
-
     const goal = await t.store.create({ id: "g", type: "github_pr_review", state: "active", summary: "g", schedule: defaultSchedule() });
     const readyFile = path.join(t.store.paths.root, "worker-ready");
     const observedSignalFile = path.join(t.store.paths.root, "worker-sigterm-observed");
@@ -909,8 +891,7 @@ test("terminal event emitted after timeout does not override timeout", async () 
     assert.match(updated.latestProgress ?? "", /Worker timed out/);
     assert.notEqual(updated.lastRunSummary, "late success");
   } finally {
-    globalThis.setTimeout = realSetTimeout;
-    globalThis.clearTimeout = realClearTimeout;
+    restore();
     await t.cleanup();
   }
 });
