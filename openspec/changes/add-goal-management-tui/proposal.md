@@ -9,6 +9,9 @@ Goal runner currently exposes durable PR automation primarily through text comma
 - Allow keyboard navigation with up/down, enter to view a selected goal, refresh, and escape/q to close.
 - Add a selected-goal detail view with nicely formatted metadata, latest progress, last run summary, pending decisions, and valid action hints.
 - Support safe lifecycle actions from the detail view: pause/resume, cancel with confirmation, and run/trigger now through scheduler-compatible behavior.
+- Add direct in-TUI equivalents for text-only operations, including status snapshots, pending decision inspection/answering, manual scheduler tick, and detailed run-history/validation views.
+- Add list-level filtering/sorting controls to narrow large goal sets by state, urgency, and id ordering.
+- Surface goal metadata paths/links (PR URL and worktree path) as first-class, quick-reference detail fields.
 - Preserve existing `/goal ...` text command behavior and CLI behavior.
 
 ## Capabilities

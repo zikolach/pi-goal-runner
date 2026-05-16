@@ -34,6 +34,18 @@ The system SHALL allow users to open a formatted detail view for the selected go
 - **WHEN** the detail view is rendered in a narrow terminal
 - **THEN** every rendered line fits within the available width and long values are truncated or wrapped safely
 
+#### Scenario: Show full status snapshot from selected goal
+- **WHEN** the user opens the selected goal detail view
+- **THEN** the system includes all fields from `/goal status <goal-id>` (type, state, summary, next check, latest progress, last run, pending decision count, worktree) in a consistent read-only snapshot
+
+#### Scenario: Inspect run history and validation output
+- **WHEN** the selected goal has run history
+- **THEN** detail view includes the latest run summary and its validation results (command, status, and optional output summary) when available
+
+#### Scenario: Open associated repository/path hints
+- **WHEN** the selected goal includes repository metadata
+- **THEN** the detail view includes the PR/worktree URL or path context in a readable form to aid navigation
+
 ### Requirement: Refresh modal state
 The system SHALL allow users to refresh the modal's view of persisted goal state without triggering worker execution.
 
@@ -76,6 +88,21 @@ The system SHALL expose valid lifecycle actions from the selected goal detail vi
 - **WHEN** the user rejects or escapes the cancellation confirmation
 - **THEN** the system leaves the selected goal state unchanged and returns to the detail view
 
+### Requirement: Pending decisions from TUI
+The system SHALL support pending-decision awareness and answering from the interactive view.
+
+#### Scenario: Navigate to pending decisions from goal detail
+- **WHEN** the selected goal has pending decisions
+- **THEN** the system shows a decision summary count and allows opening the pending list in the TUI
+
+#### Scenario: Answer pending decision from TUI
+- **WHEN** the user selects a pending decision and chooses a valid option
+- **THEN** the system submits the same answer payload as `/goal answer` and refreshes modal state without launching workers
+
+#### Scenario: Answer pending decision safely
+- **WHEN** the user submits an invalid decision id or option
+- **THEN** the system reports the error and leaves goal state unchanged
+
 ### Requirement: Run selected goal now
 The system SHALL allow users to run scheduler-compatible processing for the selected goal immediately when that goal is eligible.
 
@@ -90,6 +117,28 @@ The system SHALL allow users to run scheduler-compatible processing for the sele
 #### Scenario: Run now disabled for running goal
 - **WHEN** the selected goal is already running
 - **THEN** the system does not advertise run now as available and does not start another worker for that goal
+
+### Requirement: Trigger scheduler tick
+The system SHALL expose a direct way to trigger scheduler evaluation from the goal manager without leaving the modal.
+
+#### Scenario: Manual tick from TUI
+- **WHEN** the modal is open and the user triggers a tick action
+- **THEN** the system runs the scheduler path used by `/goal tick`/`pi-goal-runner tick` and updates the modal summary output
+
+#### Scenario: Tick behavior parity
+- **WHEN** user triggers a tick from TUI
+- **THEN** the modal observes the same launch/no-op/skip/failure semantics and output shape as text `/goal tick`
+
+### Requirement: List filtering and sorting
+The system SHALL support filtering and sorting the list without requiring CLI commands.
+
+#### Scenario: Filter goals by state
+- **WHEN** the user applies a state filter in the goal list
+- **THEN** only goals in selected states are shown while preserving selection where possible
+
+#### Scenario: Sort goals in list
+- **WHEN** the user chooses a sort order
+- **THEN** the list re-renders using a deterministic order by state, next check, and id
 
 ### Requirement: Preserve text command behavior
 The system SHALL preserve existing `/goal` text commands and CLI behavior while adding the interactive modal.

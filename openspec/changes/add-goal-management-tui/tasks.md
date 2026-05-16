@@ -33,3 +33,12 @@
 - [x] 5.2 Run `npm run typecheck` and fix any TypeScript issues.
 - [x] 5.3 Run `npm test` and ensure all existing and new tests pass.
 - [x] 5.4 Run `openspec validate add-goal-management-tui --strict`.
+
+## 6. Planned Expanded TUI Capabilities (Requested)
+
+- [ ] 6.1 Add TUI actions equivalent to `/goal status` for selected goal snapshots (read-only, includes all major status fields).
+- [ ] 6.2 Add pending-decision workflow in TUI (list pending decisions per goal and submit answer actions through existing answer semantics).
+- [ ] 6.3 Add in-TUI manual scheduler tick trigger equivalent to `/goal tick` with refreshed modal state.
+- [ ] 6.4 Expand detail rendering to show run history details and validation results for debugging.
+- [ ] 6.5 Add list filtering and sorting controls (state, next-check urgency, id) without requiring CLI argument flags.
+- [ ] 6.6 Add quick reference output for goal links and path metadata (PR URL/worktree path).

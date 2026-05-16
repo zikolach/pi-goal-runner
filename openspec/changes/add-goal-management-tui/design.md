@@ -13,6 +13,7 @@ The TUI must respect the existing goal state model and scheduler semantics. It s
 - Provide a modal, keyboard-driven goal manager for Pi interactive sessions.
 - Show a concise goal list and a formatted selected-goal detail view.
 - Support safe lifecycle actions from the detail view: pause/resume, cancel with confirmation, and run now.
+- Add in-TUI equivalents for high-value command flows: status inspection, pending-decision answering, manual tick trigger, richer run-history visibility, list filtering/sorting, and quick navigation metadata links.
 - Reuse shared goal operations so text commands and TUI actions do not drift.
 - Keep the feature bounded and compatible with existing CLI and daemon behavior.
 
@@ -23,6 +24,15 @@ The TUI must respect the existing goal state model and scheduler semantics. It s
 - Creating new goals through the TUI.
 - Killing or interrupting an already-running worker process.
 - Replacing the existing `/goal` text command surface.
+
+### Functional Enhancements for the Interactive Manager
+
+- **Status parity:** detail rows should present all fields returned by `/goal status` in a compact layout for fast read-only inspection.
+- **Decision flow:** if pending decisions exist, the selected goal detail should expose them with a way to select and answer from the modal.
+- **Manual tick:** list and detail views should include an action to trigger one scheduler tick equivalent to `/goal tick` semantics.
+- **Run history depth:** in addition to “last run summary”, the modal should expose the latest run validation outcomes and any summary output for debugging.
+- **List ergonomics:** add filters and sort mode toggle (state, next check, id, status/validity) to reduce terminal traversal for many goals.
+- **Target navigation context:** show PR/worktree URL/path in detail in clear text so operators can quickly jump using copy/paste.
 
 ## Decisions
 
