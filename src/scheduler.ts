@@ -65,20 +65,19 @@ export async function runGoalNow(store: GoalStore, goalId: string, options: Sche
       return result;
     }
     const reason = skipReason(goal, now);
-    if (reason) {
-      if (reason.startsWith("not due until")) {
-        await store.update(goalId, (current) => ({ ...current, schedule: { ...current.schedule, nextCheckAt: now.toISOString() } }), { updatedAt: now.toISOString() });
-      } else {
-        result.skipped++;
-        result.messages.push(`${goalId}: ${reason}`);
-        return result;
-      }
+    const restoreNextCheckAt = reason?.startsWith("not due until") ? goal.schedule.nextCheckAt : undefined;
+    if (reason && !restoreNextCheckAt) {
+      result.skipped++;
+      result.messages.push(`${goalId}: ${reason}`);
+      return result;
     }
 
-    const reloaded = await store.get(goalId);
-    const checkResult = await checkGoal(store, reloaded, gh, sink, options);
+    const checkResult = await checkGoal(store, goal, gh, sink, options);
     result.checked = 1;
     result.launched = checkResult.launched ? 1 : 0;
+    if (restoreNextCheckAt && !checkResult.launched) {
+      await store.update(goalId, (current) => ({ ...current, schedule: { ...current.schedule, nextCheckAt: restoreNextCheckAt } }), { updatedAt: now.toISOString() });
+    }
     if (checkResult.workerDone) {
       releaseLock = false;
       result.workerDone = checkResult.workerDone;

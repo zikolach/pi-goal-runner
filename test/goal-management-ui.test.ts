@@ -322,12 +322,14 @@ test("goal manager shows and handles cancellation confirmation and abort without
   dialog.handleInput("c");
   assert.equal(dialog.render(80).some((line) => line.includes("Cancel goal-1?")), true);
 
-  dialog.handleInput("n");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(counters.cancel, 0);
-  assert.equal(dialog.render(80).some((line) => line.includes("State") && line.includes("active")), true);
+  for (const key of ["n", "q", "ctrl+c"] as const) {
+    dialog.handleInput(key);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(counters.cancel, 0);
+    assert.equal(dialog.render(80).some((line) => line.includes("State") && line.includes("active")), true);
+    dialog.handleInput("c");
+  }
 
-  dialog.handleInput("c");
   dialog.handleInput("enter");
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(counters.cancel, 1);

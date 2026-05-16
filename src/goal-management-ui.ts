@@ -473,7 +473,7 @@ export class GoalManagerDialog implements GoalManagerComponent {
       truncateLine(prompt.prompt, width),
       truncateLine(`Yes=${prompt.yesHint}, No=${prompt.noHint}`, width),
       "",
-      truncateLine("y:confirm • n/esc:keep", width),
+      truncateLine("y:confirm • n/q/esc:keep", width),
     ];
   }
 
@@ -641,7 +641,7 @@ export class GoalManagerDialog implements GoalManagerComponent {
 
     if (key === "c" && availability.canCancel) {
       this.view = "confirm-cancel";
-      this.confirm = { prompt: `Cancel ${goal.id}?`, yesHint: "y", noHint: "n/esc" };
+      this.confirm = { prompt: `Cancel ${goal.id}?`, yesHint: "y", noHint: "n/q/esc" };
       this.requestRender();
       return;
     }
@@ -749,7 +749,7 @@ export class GoalManagerDialog implements GoalManagerComponent {
       await this.reloadSelectedGoal();
       return;
     }
-    if (key === "n" || key === "escape") {
+    if (key === "n" || key === "escape" || key === "q" || key === "ctrl+c") {
       this.view = "detail";
       this.confirm = undefined;
       this.requestRender();

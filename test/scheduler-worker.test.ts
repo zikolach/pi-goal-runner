@@ -111,7 +111,7 @@ test("due selection skips paused/cancelled/waiting goals", async () => {
   }
 });
 
-test("runGoalNow can make non-due goal due immediately and avoids forced worker launch", async () => {
+test("runGoalNow can inspect a non-due goal without losing the scheduled check on no-op", async () => {
   const t = await tempStore();
   try {
     const schedule = defaultSchedule(new Date("2026-01-01T00:00:00Z"));
@@ -147,7 +147,7 @@ test("runGoalNow can make non-due goal due immediately and avoids forced worker 
     assert.equal(updated.state, "active");
     assert.ok(calls > 0);
     assert.equal(calls >= 1, true);
-    assert.notEqual(updated.schedule.nextCheckAt, schedule.nextCheckAt);
+    assert.equal(updated.schedule.nextCheckAt, schedule.nextCheckAt);
   } finally {
     await t.cleanup();
   }

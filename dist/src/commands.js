@@ -54,6 +54,8 @@ export async function handleGoalCommandArgs(store, args, options = {}) {
         const result = await schedulerTick(store, { gh: options.gh, worker: { dryRun: options.dryRunWorker } });
         return `Checked ${result.checked}, launched ${result.launched}, skipped ${result.skipped}, failures ${result.failures}\n${result.messages.join("\n")}`.trim();
     }
+    if (cmd === "ui")
+        return "Interactive goal management requires an interactive Pi session. Use /goal ui or /goals inside Pi.";
     throw new Error(`Unknown /goal subcommand: ${cmd}`);
 }
 export function goalHelp() {
