@@ -35,11 +35,16 @@ The package registers a `/goal` Pi command and a `pi-goal-runner` CLI after buil
 `/goals` opens a modal, table-style goal manager in interactive Pi sessions. `/goal ui` is also supported as an alias.
 
 Keybindings:
-- `↑` / `↓`: navigate goal list
+- `↑` / `↓`: navigate goal rows; scroll selected-goal detail content while in detail view
+- `←` / `→`: select and horizontally scroll table columns
 - `enter`: open selected goal detail
 - `q` / `esc`: close modal from list
 - `b` / `esc`: return to list from detail
 - `r`: refresh goals (list or selected detail)
+- `f`: cycle list state filters
+- `s`: sort the list by the selected table column
+- `d`: open pending decisions from a selected goal
+- `t`: trigger a scheduler tick
 - `p`: pause/resume selected goal
 - `c`: request cancel (requires confirmation)
 - `n`: run selected goal now

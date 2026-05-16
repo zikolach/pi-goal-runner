@@ -46,10 +46,13 @@ export declare class GoalManagerDialog implements GoalManagerComponent {
     private selectedGoalId?;
     private selectedFilterIndex;
     private selectedSortIndex;
+    private selectedListColumnIndex;
+    private selectedDecisionColumnIndex;
+    private detailScrollOffset;
+    private listLineCount;
     private selectedDecisionIndex;
     private selectedDecisionId?;
     private confirm?;
-    private expandedLineCount;
     private lastTickSummary;
     constructor(initialGoals: GoalRecord[], callbacks: GoalManagerCallbacks, requestRender: () => void, done: () => void);
     render(width: number): string[];
@@ -74,9 +77,12 @@ export declare class GoalManagerDialog implements GoalManagerComponent {
     private syncDecisionSelection;
     private sortGoals;
     private renderList;
+    private rememberListLines;
     private renderCompactGoalList;
     private renderDetail;
-    private renderCompactDetail;
+    private renderDetailTableContent;
+    private renderCompactDetailContent;
+    private renderScrollableDetail;
     private renderDecisions;
     private renderDecisionAnswer;
     invalidate(): void;

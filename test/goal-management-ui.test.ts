@@ -5,6 +5,14 @@ import type { GoalRecord } from "../src/types.js";
 import { GoalManagerDialog } from "../src/goal-management-ui.js";
 import type { GoalManagerCallbacks } from "../src/goal-management-ui.js";
 
+function stripAnsi(value: string): string {
+  return value.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function visibleLength(value: string): number {
+  return stripAnsi(value).length;
+}
+
 function makeGoal(overrides: Partial<GoalRecord>): GoalRecord {
   const now = "2026-01-01T00:00:00.000Z";
   return {
@@ -179,6 +187,7 @@ test("goal manager preserves multiline field text in wrapped detail rows", () =>
   );
 
   dialog.handleInput("enter");
+  for (let index = 0; index < 12; index++) dialog.handleInput("down");
   const lines = dialog.render(80);
   const body = lines.join("\n");
   assert.equal(body.includes("Latest progress line one"), true);
@@ -229,12 +238,13 @@ test("goal manager uses compact readable detail layout at narrow widths", () => 
   );
 
   dialog.handleInput("enter");
+  for (let index = 0; index < 8; index++) dialog.handleInput("down");
   const lines = dialog.render(32);
   const body = lines.join("\n");
   assert.equal(body.includes("Property"), false);
-  assert.equal(body.includes("State:"), true);
+  assert.equal(body.includes("Scroll"), true);
   assert.equal(body.includes("Latest progress:"), true);
-  assert.equal(body.includes("d decisions"), true);
+  assert.equal(body.includes("b back"), true);
   assert.equal(lines.every((line) => line.length <= 32), true);
 });
 
@@ -285,11 +295,47 @@ test("goal manager renders list and detail views with expected fields and action
 test("goal manager uses table layout for list and detail", () => {
   const dialog = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" })], createCallbacks().callbacks, () => {}, () => {});
   const listLines = dialog.render(120);
-  assert.equal(listLines.some((line) => line.includes("Sel") && line.includes("Target") && line.includes("|") && line.includes("Actions")), true);
+  assert.equal(listLines.some((line) => line.includes("ID") && line.includes("Target") && line.includes("|") && line.includes("Actions")), true);
+  assert.equal(listLines.some((line) => line.includes("Sel")), false);
 
   dialog.handleInput("enter");
   const detailLines = dialog.render(120);
   assert.equal(detailLines.some((line) => line.includes("Property") && line.includes("Value") && line.includes("|")), true);
+});
+
+test("goal manager highlights selected table row instead of using marker column", () => {
+  const dialog = new GoalManagerDialog([makeGoal({ id: "goal-1", state: "active" }), makeGoal({ id: "goal-2", state: "paused" })], createCallbacks().callbacks, () => {}, () => {});
+  const firstRender = dialog.render(120).join("\n");
+  assert.equal(firstRender.includes("\x1b[7m"), true);
+  assert.equal(stripAnsi(firstRender).includes("> |"), false);
+
+  dialog.handleInput("down");
+  const secondRender = dialog.render(120).join("\n");
+  const highlightedLine = secondRender.split("\n").find((line) => line.includes("\x1b[7m")) ?? "";
+  assert.equal(highlightedLine.includes("goal-2"), true);
+});
+
+test("goal manager selects columns with arrows and sorts by selected column", () => {
+  const dialog = new GoalManagerDialog([
+    makeGoal({ id: "goal-b", state: "active", summary: "zulu target" }),
+    makeGoal({ id: "goal-a", state: "active", summary: "alpha target" }),
+  ], createCallbacks().callbacks, () => {}, () => {});
+
+  dialog.handleInput("right"); // target column from default state column
+  dialog.handleInput("s");
+  const lines = stripAnsi(dialog.render(120).join("\n"));
+  assert.equal(lines.includes("Target▲"), true);
+  assert.equal(lines.indexOf("goal-a") < lines.indexOf("goal-b"), true);
+});
+
+test("goal manager horizontally scrolls table columns with left/right", () => {
+  const dialog = new GoalManagerDialog([makeGoal({ id: "goal-column-scroll", state: "active" })], createCallbacks().callbacks, () => {}, () => {});
+  dialog.render(54);
+  dialog.handleInput("right");
+  dialog.handleInput("right");
+  const lines = dialog.render(54).map(stripAnsi);
+  assert.equal(lines.some((line) => line.includes("Next check▲") || line.includes("Actions▲")), true);
+  assert.equal(lines.every((line) => visibleLength(line) <= 54), true);
 });
 
 test("goal manager refresh actions do not call action callbacks", async () => {
@@ -362,5 +408,5 @@ test("goal manager keeps list height stable after leaving detail view", () => {
   const backToListLines = dialog.render(80);
 
   assert.equal(detailLines.length > listLines.length, true);
-  assert.equal(backToListLines.length, detailLines.length);
+  assert.equal(backToListLines.length, listLines.length);
 });

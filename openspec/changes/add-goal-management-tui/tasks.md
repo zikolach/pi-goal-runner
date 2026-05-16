@@ -42,3 +42,11 @@
 - [x] 6.4 Expand detail rendering to show run history details and validation results for debugging.
 - [x] 6.5 Add list filtering and sorting controls (state, next-check urgency, id) without requiring CLI argument flags.
 - [x] 6.6 Add quick reference output for goal links and path metadata (PR URL/worktree path).
+
+## 7. Table Navigation and Detail Scrolling
+
+- [x] 7.1 Replace dedicated row selector columns with highlighted selected rows in table views.
+- [x] 7.2 Add left/right column selection that horizontally scrolls table columns.
+- [x] 7.3 Sort the goal list by the currently selected table column.
+- [x] 7.4 Keep detail view height bounded and scroll detail content with up/down/page/home/end keys.
+- [x] 7.5 Add regression tests for highlighted rows, column scrolling/sorting, and scrollable details.

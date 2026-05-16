@@ -139,20 +139,61 @@ function normalizeCodepointForName(codepoint) {
     };
     return kittyEquivalent[codepoint] ?? codepoint;
 }
+const ANSI_PATTERN = /\x1b\[[0-9;]*m/g;
+const INVERSE = "\x1b[7m";
+const RESET = "\x1b[0m";
+function stripAnsi(value) {
+    return value.replace(ANSI_PATTERN, "");
+}
+function visibleLength(value) {
+    return stripAnsi(value).length;
+}
 function truncateLine(value, width) {
     if (width <= 0)
         return "";
-    if (value.length <= width)
+    if (visibleLength(value) <= width)
         return value;
     if (width === 1)
         return value.slice(0, 1);
-    return `${value.slice(0, Math.max(0, width - 1))}…`;
+    const target = Math.max(0, width - 1);
+    let visible = 0;
+    let output = "";
+    for (let index = 0; index < value.length;) {
+        if (value[index] === "\x1b") {
+            const match = value.slice(index).match(/^\x1b\[[0-9;]*m/);
+            if (match) {
+                output += match[0];
+                index += match[0].length;
+                continue;
+            }
+        }
+        if (visible >= target)
+            break;
+        output += value[index];
+        visible += 1;
+        index += 1;
+    }
+    return `${output}…${value.includes("\x1b[") ? RESET : ""}`;
+}
+function padLine(value, width) {
+    return `${value}${" ".repeat(Math.max(0, width - visibleLength(value)))}`;
+}
+function highlightLine(value) {
+    return `${INVERSE}${value}${RESET}`;
 }
 function fallbackText(value, fallback = "?") {
     return value ? String(value) : fallback;
 }
 const STATE_FILTERS = ["all", "active", "paused", "running", "needs_decision", "failed", "completed", "dormant", "cancelled"];
-const SORT_MODES = ["state", "next", "id"];
+const SORT_MODES = ["state", "next", "id", "target", "actions"];
+const LIST_COLUMNS = ["id", "state", "target", "next", "actions"];
+const LIST_COLUMN_LABELS = {
+    id: "ID",
+    state: "State",
+    target: "Target",
+    next: "Next check",
+    actions: "Actions",
+};
 const STATE_SORT_ORDER = {
     active: 1,
     running: 2,
@@ -200,7 +241,7 @@ function buildActionHints(goal) {
 }
 function renderCell(value, width) {
     const normalized = truncateLine(String(value), width);
-    return normalized.padEnd(width, " ");
+    return padLine(normalized, width);
 }
 function wrapCell(value, width) {
     if (width <= 1)
@@ -308,6 +349,63 @@ function renderRows(headers, rows, width, shrinkOrder = [], wrap = false) {
         ...body,
     ].map((line) => truncateLine(line, width));
 }
+function renderHorizontalTable(headers, rows, width, selectedRowIndex, selectedColumnIndex) {
+    if (!headers.length)
+        return [];
+    const columnWidths = headers.map((header, index) => {
+        const maxCell = rows.reduce((max, row) => Math.max(max, visibleLength((row[index] ?? "").replace(/\r?\n/g, " "))), visibleLength(header));
+        const cap = header === "ID" || header === "Decision" ? 18 : header === "Target" || header === "Prompt" ? 24 : 24;
+        return Math.max(3, Math.min(cap, maxCell));
+    });
+    const visibleIndexes = selectVisibleColumns(columnWidths, width, selectedColumnIndex);
+    const headerCells = headers.map((header, index) => index === selectedColumnIndex ? `${header}▲` : header);
+    const visibleWidths = visibleIndexes.map((index) => Math.max(columnWidths[index] ?? 3, visibleLength(headerCells[index] ?? "")));
+    const renderVisibleRow = (cells) => visibleIndexes
+        .map((index, localIndex) => renderCell((cells[index] ?? "").replace(/\r?\n/g, " "), visibleWidths[localIndex] ?? 3))
+        .join(" | ");
+    const headerLine = renderVisibleRow(headerCells);
+    const dividerLine = visibleWidths.map((columnWidth) => "─".repeat(Math.max(1, columnWidth))).join("─┼─");
+    const body = rows.map((row, index) => {
+        const line = truncateLine(renderVisibleRow(row), width);
+        return index === selectedRowIndex ? highlightLine(padLine(line, width)) : line;
+    });
+    return [headerLine, dividerLine, ...body].map((line) => truncateLine(line, width));
+}
+function selectVisibleColumns(columnWidths, width, selectedColumnIndex) {
+    if (!columnWidths.length)
+        return [];
+    const selected = Math.max(0, Math.min(selectedColumnIndex, columnWidths.length - 1));
+    const separator = 3;
+    let indexes = [selected];
+    let used = columnWidths[selected] ?? 3;
+    let left = selected - 1;
+    let right = selected + 1;
+    while (left >= 0 || right < columnWidths.length) {
+        const tryLeft = left >= 0 ? (columnWidths[left] ?? 3) + separator : Number.POSITIVE_INFINITY;
+        const tryRight = right < columnWidths.length ? (columnWidths[right] ?? 3) + separator : Number.POSITIVE_INFINITY;
+        const preferLeft = tryLeft <= tryRight;
+        if (preferLeft && used + tryLeft <= width) {
+            indexes = [left, ...indexes];
+            used += tryLeft;
+            left -= 1;
+            continue;
+        }
+        if (right < columnWidths.length && used + tryRight <= width) {
+            indexes = [...indexes, right];
+            used += tryRight;
+            right += 1;
+            continue;
+        }
+        if (!preferLeft && left >= 0 && used + tryLeft <= width) {
+            indexes = [left, ...indexes];
+            used += tryLeft;
+            left -= 1;
+            continue;
+        }
+        break;
+    }
+    return indexes;
+}
 function toDialogLines(lines, width) {
     if (width <= 2) {
         return lines.map((line) => truncateLine(line, width));
@@ -315,7 +413,7 @@ function toDialogLines(lines, width) {
     const innerWidth = Math.max(1, width - 2);
     const top = `╭${"─".repeat(innerWidth)}╮`;
     const bottom = `╰${"─".repeat(innerWidth)}╯`;
-    const body = lines.map((line) => `│${truncateLine(line, innerWidth).padEnd(innerWidth, " ")}│`);
+    const body = lines.map((line) => `│${padLine(truncateLine(line, innerWidth), innerWidth)}│`);
     return [top, ...body, bottom];
 }
 function goalMetadataRows(goal) {
@@ -378,10 +476,13 @@ export class GoalManagerDialog {
     selectedGoalId;
     selectedFilterIndex = 0;
     selectedSortIndex = 0;
+    selectedListColumnIndex = 1;
+    selectedDecisionColumnIndex = 0;
+    detailScrollOffset = 0;
+    listLineCount = 0;
     selectedDecisionIndex = 0;
     selectedDecisionId;
     confirm;
-    expandedLineCount = 0;
     lastTickSummary = "";
     constructor(initialGoals, callbacks, requestRender, done) {
         this.callbacks = callbacks;
@@ -392,13 +493,6 @@ export class GoalManagerDialog {
     }
     render(width) {
         const lines = this.renderCurrentView(Math.max(1, width - 2));
-        if (this.view !== "list") {
-            this.expandedLineCount = Math.max(this.expandedLineCount, lines.length);
-        }
-        if (this.view === "list" && this.expandedLineCount > 0 && lines.length < this.expandedLineCount && width > 2) {
-            const bodyHeight = Math.max(0, this.expandedLineCount - lines.length);
-            lines.push(...Array(bodyHeight).fill(""));
-        }
         return toDialogLines(lines, width);
     }
     renderCurrentView(width) {
@@ -502,10 +596,21 @@ export class GoalManagerDialog {
             this.requestRender();
             return;
         }
+        if (key === "left") {
+            this.selectedListColumnIndex = Math.max(0, this.selectedListColumnIndex - 1);
+            this.requestRender();
+            return;
+        }
+        if (key === "right") {
+            this.selectedListColumnIndex = Math.min(LIST_COLUMNS.length - 1, this.selectedListColumnIndex + 1);
+            this.requestRender();
+            return;
+        }
         if (key === "enter") {
             if (!this.selectedGoal)
                 return;
             this.view = "detail";
+            this.detailScrollOffset = 0;
             this.requestRender();
             return;
         }
@@ -521,7 +626,9 @@ export class GoalManagerDialog {
             return;
         }
         if (key === "s") {
-            this.selectedSortIndex = (this.selectedSortIndex + 1) % SORT_MODES.length;
+            const column = LIST_COLUMNS[this.selectedListColumnIndex] ?? "state";
+            const sortMode = column === "next" ? "next" : column;
+            this.selectedSortIndex = SORT_MODES.indexOf(sortMode);
             this.syncSelection(this.visibleGoals());
             this.requestRender();
             return;
@@ -550,6 +657,36 @@ export class GoalManagerDialog {
         }
         if (key === "r") {
             void this.reloadSelectedGoal();
+            return;
+        }
+        if (key === "up") {
+            this.detailScrollOffset = Math.max(0, this.detailScrollOffset - 1);
+            this.requestRender();
+            return;
+        }
+        if (key === "down") {
+            this.detailScrollOffset += 1;
+            this.requestRender();
+            return;
+        }
+        if (key === "pageup") {
+            this.detailScrollOffset = Math.max(0, this.detailScrollOffset - 5);
+            this.requestRender();
+            return;
+        }
+        if (key === "pagedown") {
+            this.detailScrollOffset += 5;
+            this.requestRender();
+            return;
+        }
+        if (key === "home") {
+            this.detailScrollOffset = 0;
+            this.requestRender();
+            return;
+        }
+        if (key === "end") {
+            this.detailScrollOffset = Number.MAX_SAFE_INTEGER;
+            this.requestRender();
             return;
         }
         if (key === "d") {
@@ -607,6 +744,16 @@ export class GoalManagerDialog {
                 return;
             this.selectedDecisionIndex = (this.selectedDecisionIndex + 1) % pending.length;
             this.selectedDecisionId = pending[this.selectedDecisionIndex]?.id;
+            this.requestRender();
+            return;
+        }
+        if (key === "left") {
+            this.selectedDecisionColumnIndex = Math.max(0, this.selectedDecisionColumnIndex - 1);
+            this.requestRender();
+            return;
+        }
+        if (key === "right") {
+            this.selectedDecisionColumnIndex = Math.min(2, this.selectedDecisionColumnIndex + 1);
             this.requestRender();
             return;
         }
@@ -723,6 +870,10 @@ export class GoalManagerDialog {
             return "state";
         if (this.sortMode === "next")
             return "next";
+        if (this.sortMode === "target")
+            return "target";
+        if (this.sortMode === "actions")
+            return "actions";
         return "id";
     }
     syncSelection(visibleGoals) {
@@ -774,6 +925,16 @@ export class GoalManagerDialog {
                 if (byNext !== 0)
                     return byNext;
             }
+            if (this.sortMode === "target") {
+                const byTarget = compareStrings(goalTargetLine(a), goalTargetLine(b));
+                if (byTarget !== 0)
+                    return byTarget;
+            }
+            if (this.sortMode === "actions") {
+                const byActions = compareStrings(buildActionHints(a).join(","), buildActionHints(b).join(","));
+                if (byActions !== 0)
+                    return byActions;
+            }
             const byId = compareStrings(a.id, b.id);
             if (byId !== 0)
                 return byId;
@@ -790,24 +951,24 @@ export class GoalManagerDialog {
             lines.push(truncateLine("Press r to refresh, f cycle filter, s sort, t tick, q/esc to close", width));
             if (this.lastTickSummary)
                 lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
-            return lines;
+            return this.rememberListLines(lines);
         }
         if (width < 48) {
             lines.push(...this.renderCompactGoalList(goals, width));
             lines.push("");
             lines.push(truncateLine(`Filter: ${this.stateFilter} Sort: ${this.sortModeLabel}`, width));
             lines.push(truncateLine("↑/↓ move  enter detail", width));
-            lines.push(truncateLine("f filter  s sort  r refresh  t tick", width));
+            lines.push(truncateLine("←/→ column  s sort column", width));
+            lines.push(truncateLine("f filter  r refresh  t tick", width));
             lines.push(truncateLine("q/esc close", width));
             if (this.lastTickSummary)
                 lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
-            return lines;
+            return this.rememberListLines(lines);
         }
-        const headers = ["Sel", "ID", "State", "Target", "Next check", "Actions"];
-        const rows = goals.map((goal, index) => {
+        const headers = LIST_COLUMNS.map((column) => LIST_COLUMN_LABELS[column]);
+        const rows = goals.map((goal) => {
             const hints = buildActionHints(goal);
             return [
-                index === this.selectedIndex ? ">" : " ",
                 goal.id,
                 goal.state,
                 goalTargetLine(goal),
@@ -816,12 +977,17 @@ export class GoalManagerDialog {
             ];
         });
         lines.push("");
-        lines.push(...renderRows(headers, rows, width, [5, 4, 3, 2, 1, 0], false));
+        lines.push(...renderHorizontalTable(headers, rows, width, this.selectedIndex, this.selectedListColumnIndex));
         lines.push("");
-        lines.push(truncateLine(`Filter: ${this.stateFilter}   Sort: ${this.sortModeLabel}`, width));
-        lines.push(truncateLine("↑/↓:move  enter:detail  f:cycle filter  s:cycle sort  r:refresh  t:tick  q/esc:close", width));
+        lines.push(truncateLine(`Filter: ${this.stateFilter}   Sort: ${this.sortModeLabel}   Column: ${LIST_COLUMN_LABELS[LIST_COLUMNS[this.selectedListColumnIndex] ?? "state"]}`, width));
+        lines.push(truncateLine("↑/↓:row  ←/→:column/scroll  s:sort column  enter:detail", width));
+        lines.push(truncateLine("f:filter  r:refresh  t:tick  q/esc:close", width));
         if (this.lastTickSummary)
             lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
+        return this.rememberListLines(lines);
+    }
+    rememberListLines(lines) {
+        this.listLineCount = lines.length;
         return lines;
     }
     renderCompactGoalList(goals, width) {
@@ -844,36 +1010,32 @@ export class GoalManagerDialog {
         const goal = this.selectedGoal;
         if (!goal)
             return this.renderList(width);
-        if (width < 48)
-            return this.renderCompactDetail(goal, width);
+        const content = width < 48 ? this.renderCompactDetailContent(goal, width) : this.renderDetailTableContent(goal, width);
+        return this.renderScrollableDetail(goal, content, width);
+    }
+    renderDetailTableContent(goal, width) {
         const hints = buildActionHints(goal);
         const display = getGoalDisplayMetadata(goal);
-        const lines = ["", `Goal ${goal.id}`, ""];
         const table = goalMetadataRows(goal);
-        table.push(["Actions", hints.length ? hints.join(",") : "(none)"]);
+        table.splice(3, 0, ["Actions", hints.length ? hints.join(",") : "(none)"]);
         table.push(...runHistoryRows(goal.runHistory));
         if (display.details?.length) {
-            for (const detail of display.details) {
+            for (const detail of display.details)
                 table.push([detail.label, detail.value]);
-            }
         }
-        lines.push(...renderRows(["Property", "Value"], table, width, [1], true));
+        const lines = renderRows(["Property", "Value"], table, width, [1], true);
         if (countPendingDecisions(goal) > 0) {
             lines.push("");
             lines.push(truncateLine(`Pending decisions: ${countPendingDecisions(goal)} (press d)`, width));
         }
-        lines.push("");
-        lines.push(truncateLine("b/esc back  d:pending decisions  r refresh  p:pause/resume  c:cancel  n:run now  t:tick", width));
-        if (this.lastTickSummary)
-            lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
         return lines;
     }
-    renderCompactDetail(goal, width) {
+    renderCompactDetailContent(goal, width) {
         const hints = buildActionHints(goal);
         const display = getGoalDisplayMetadata(goal);
-        const lines = ["", `Goal ${goal.id}`, truncateLine("b back • d decisions • r refresh", width), ""];
+        const lines = [];
         const rows = goalMetadataRows(goal);
-        rows.push(["Actions", hints.length ? hints.join(",") : "(none)"]);
+        rows.splice(3, 0, ["Actions", hints.length ? hints.join(",") : "(none)"]);
         rows.push(...runHistoryRows(goal.runHistory));
         if (display.details?.length) {
             for (const detail of display.details)
@@ -886,13 +1048,27 @@ export class GoalManagerDialog {
             lines.push("");
             lines.push(truncateLine(`Pending decisions: ${countPendingDecisions(goal)} (d)`, width));
         }
-        lines.push("");
-        lines.push(truncateLine("b back  d decisions  r refresh", width));
-        lines.push(truncateLine("p pause/resume  c cancel", width));
-        lines.push(truncateLine("n run-now  t tick", width));
-        if (this.lastTickSummary)
-            lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
         return lines;
+    }
+    renderScrollableDetail(goal, content, width) {
+        const header = ["", `Goal ${goal.id}`, truncateLine("↑/↓ scroll • b back • d decisions • r refresh", width), ""];
+        const footer = [
+            "",
+            truncateLine("p pause/resume  c cancel  n run-now  t tick", width),
+        ];
+        if (this.lastTickSummary)
+            footer.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
+        const defaultLineCount = width >= 50 ? 22 : 12;
+        const maxLineCount = width >= 50 ? 28 : 18;
+        const targetLineCount = Math.max(defaultLineCount, Math.min(maxLineCount, this.listLineCount || defaultLineCount));
+        const viewportHeight = Math.max(3, targetLineCount - header.length - footer.length - 1);
+        const maxScroll = Math.max(0, content.length - viewportHeight);
+        this.detailScrollOffset = Math.max(0, Math.min(this.detailScrollOffset, maxScroll));
+        const visible = content.slice(this.detailScrollOffset, this.detailScrollOffset + viewportHeight);
+        const position = maxScroll > 0
+            ? truncateLine(`Scroll ${this.detailScrollOffset + 1}-${Math.min(content.length, this.detailScrollOffset + viewportHeight)}/${content.length}`, width)
+            : truncateLine(`Scroll 1-${content.length}/${content.length}`, width);
+        return [...header, ...visible, position, ...footer];
     }
     renderDecisions(width) {
         const goal = this.selectedGoal;
@@ -920,15 +1096,14 @@ export class GoalManagerDialog {
             lines.push(truncateLine("b back  r refresh", width));
             return lines;
         }
-        const rows = pending.map((decision, index) => [
-            index === this.selectedDecisionIndex ? ">" : " ",
+        const rows = pending.map((decision) => [
             decision.id,
             decision.prompt,
             decision.required ? "required" : "optional",
         ]);
-        lines.push(...renderRows(["Sel", "Decision", "Prompt", "Required"], rows, width, [2, 1, 0], false));
+        lines.push(...renderHorizontalTable(["Decision", "Prompt", "Required"], rows, width, this.selectedDecisionIndex, this.selectedDecisionColumnIndex));
         lines.push("");
-        lines.push(truncateLine("↑/↓:move  enter:answer  b/back  r:refresh", width));
+        lines.push(truncateLine("↑/↓:row  ←/→:column/scroll  enter:answer  b/back  r:refresh", width));
         return lines;
     }
     renderDecisionAnswer(width) {

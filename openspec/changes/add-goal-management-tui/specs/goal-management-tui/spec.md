@@ -140,6 +140,29 @@ The system SHALL support filtering and sorting the list without requiring CLI co
 - **WHEN** the user chooses a sort order
 - **THEN** the list re-renders using a deterministic order by state, next check, and id
 
+#### Scenario: Select table column and sort
+- **WHEN** the user moves the selected table column with left or right and triggers sort
+- **THEN** the list sorts by the selected column and keeps the selected goal highlighted where possible
+
+#### Scenario: Horizontally inspect table columns
+- **WHEN** the list or pending-decision table is narrower than all available columns
+- **THEN** left and right move the selected column and horizontally scroll the visible column window without adding a separate row-marker column
+
+#### Scenario: Highlight selected row
+- **WHEN** the user navigates rows in table view
+- **THEN** the selected row is visually highlighted rather than represented by a dedicated selector column
+
+### Requirement: Scrollable detail viewport
+The system SHALL keep detail views usable when the content exceeds the modal height.
+
+#### Scenario: Scroll selected goal detail
+- **WHEN** the selected goal detail contains more fields than fit in the modal viewport
+- **THEN** up/down and page/home/end keys scroll the detail content while preserving pinned navigation/action hints
+
+#### Scenario: Return from scrollable detail
+- **WHEN** the user returns from a scrolled detail view to the list
+- **THEN** the list returns to its normal height without inheriting stale detail lines
+
 ### Requirement: Preserve text command behavior
 The system SHALL preserve existing `/goal` text commands and CLI behavior while adding the interactive modal.
 
