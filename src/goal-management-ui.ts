@@ -1,8 +1,8 @@
-import type { GoalRecord } from "./types.js";
+import type { DecisionRecord, GoalRecord, GoalState, RunSummary, ValidationResult } from "./types.js";
 import { getGoalActionAvailability } from "./goal-operations.js";
 import { getGoalDisplayMetadata } from "./adapters/registry.js";
 
-export type GoalManagerView = "list" | "detail" | "confirm-cancel";
+export type GoalManagerView = "list" | "detail" | "decisions" | "decision-answer" | "confirm-cancel";
 
 export interface GoalManagerCallbacks {
   loadGoals(): Promise<GoalRecord[]>;
@@ -11,6 +11,8 @@ export interface GoalManagerCallbacks {
   resumeGoal(goalId: string): Promise<{ ok: boolean; reason?: string }>;
   cancelGoal(goalId: string): Promise<{ ok: boolean; reason?: string }>;
   runGoalNow(goalId: string): Promise<{ ok: boolean; reason?: string }>;
+  answerDecision(goalId: string, decisionId: string, choice: string): Promise<{ ok: boolean; reason?: string }>;
+  runSchedulerTick(): Promise<{ ok: boolean; summary: string; reason?: string; messages: string[] }>;
   notify(message: string, type?: "info" | "warning" | "error"): void;
 }
 
@@ -167,7 +169,6 @@ function normalizeCodepointForName(codepoint: number): number {
   return kittyEquivalent[codepoint] ?? codepoint;
 }
 
-
 function truncateLine(value: string, width: number): string {
   if (width <= 0) return "";
   if (value.length <= width) return value;
@@ -177,6 +178,42 @@ function truncateLine(value: string, width: number): string {
 
 function fallbackText(value: string | undefined, fallback = "?"): string {
   return value ? String(value) : fallback;
+}
+
+const STATE_FILTERS = ["all", "active", "paused", "running", "needs_decision", "failed", "completed", "dormant", "cancelled"] as const;
+type StateFilter = (typeof STATE_FILTERS)[number];
+
+const SORT_MODES = ["state", "next", "id"] as const;
+type SortMode = (typeof SORT_MODES)[number];
+
+const STATE_SORT_ORDER: Record<GoalState, number> = {
+  active: 1,
+  running: 2,
+  needs_decision: 3,
+  failed: 4,
+  dormant: 5,
+  paused: 6,
+  cancelled: 7,
+  completed: 8,
+};
+
+function compareStrings(a: string, b: string): number {
+  return a.localeCompare(b);
+}
+
+function compareIsoDate(a?: string, b?: string): number {
+  if (a === b) return 0;
+  if (!a) return 1;
+  if (!b) return -1;
+  return compareStrings(a, b);
+}
+
+function countPendingDecisions(goal: GoalRecord): number {
+  return goal.pendingDecisions.filter((decision) => decision.status === "pending").length;
+}
+
+function getPendingDecisions(goal: GoalRecord): DecisionRecord[] {
+  return goal.pendingDecisions.filter((decision) => decision.status === "pending");
 }
 
 function goalTargetLine(goal: GoalRecord): string {
@@ -220,6 +257,16 @@ function wrapCell(value: string, width: number): string[] {
   }
 
   return lines.length === 0 ? [""] : lines;
+}
+
+function wrappedLines(value: string, width: number): string[] {
+  return wrapCell(value, width).map((line) => truncateLine(line, width));
+}
+
+function wrappedPrefixedLines(prefix: string, value: string, width: number): string[] {
+  if (width <= prefix.length + 1) return wrappedLines(`${prefix}${value}`, width);
+  const bodyWidth = Math.max(1, width - prefix.length);
+  return wrapCell(value, bodyWidth).map((line, index) => truncateLine(`${index === 0 ? prefix : " ".repeat(prefix.length)}${line}`, width));
 }
 
 function renderRows(headers: string[], rows: string[][], width: number, shrinkOrder: number[] = [], wrap = false): string[] {
@@ -313,12 +360,75 @@ function toDialogLines(lines: string[], width: number): string[] {
   return [top, ...body, bottom];
 }
 
+function goalMetadataRows(goal: GoalRecord): string[][] {
+  const display = getGoalDisplayMetadata(goal);
+
+  const rows: string[][] = [
+    ["ID", goal.id],
+    ["Type", goal.type],
+    ["State", goal.state],
+    ["Summary", fallbackText(goal.summary, "")],
+    ["Target", goalTargetLine(goal)],
+    ["Next check", fallbackText(goal.schedule.nextCheckAt, "none")],
+    ["Latest progress", fallbackText(goal.latestProgress, "none")],
+    ["Last run", fallbackText(goal.lastRunSummary ?? goal.runHistory.at(-1)?.summary, "none")],
+    ["Pending decisions", String(countPendingDecisions(goal))],
+  ];
+
+  if (goal.github?.prUrl) {
+    rows.push(["PR URL", goal.github.prUrl]);
+  }
+
+  if (display.workspace) {
+    rows.push(["Worktree", display.workspace]);
+  }
+
+  if (goal.github?.repository?.worktreePath && goal.github.repository.worktreePath !== display.workspace) {
+    rows.push(["Worktree path", goal.github.repository.worktreePath]);
+  }
+
+  return rows;
+}
+
+function runHistoryRows(runHistory: RunSummary[] | undefined): string[][] {
+  const latestRun = runHistory?.at(-1);
+  if (!latestRun) return [];
+
+  const rows: string[][] = [
+    ["Latest run id", latestRun.id],
+    ["Latest run status", latestRun.status],
+    ["Latest run started", fallbackText(latestRun.startedAt, "none")],
+    ["Latest run completed", fallbackText(latestRun.completedAt, "pending")],
+    ["Latest run output", fallbackText(latestRun.summary, "none")],
+  ];
+
+  const validation = latestRun.validationResults ?? [];
+  for (let index = 0; index < validation.length; index++) {
+    const result = validation[index];
+    if (!result) continue;
+    rows.push([`Validation ${index + 1} command`, validationResultCommand(result)]);
+    rows.push([`Validation ${index + 1} status`, result.status]);
+    if (result.output) rows.push([`Validation ${index + 1} output`, result.output]);
+  }
+  return rows;
+}
+
+function validationResultCommand(result: ValidationResult): string {
+  return fallbackText(result.command, "");
+}
+
 export class GoalManagerDialog implements GoalManagerComponent {
   private goals: GoalRecord[];
   private view: GoalManagerView = "list";
   private selectedIndex = 0;
+  private selectedGoalId?: string;
+  private selectedFilterIndex = 0;
+  private selectedSortIndex = 0;
+  private selectedDecisionIndex = 0;
+  private selectedDecisionId?: string;
   private confirm?: ConfirmMessage;
-  private detailLineCount = 0;
+  private expandedLineCount = 0;
+  private lastTickSummary = "";
 
   constructor(
     initialGoals: GoalRecord[],
@@ -327,34 +437,44 @@ export class GoalManagerDialog implements GoalManagerComponent {
     private done: () => void,
   ) {
     this.goals = [...initialGoals];
+    this.selectedGoalId = this.goals[0]?.id;
   }
 
   render(width: number): string[] {
-    if (this.view === "confirm-cancel" && this.selectedGoal) {
-      const goal = this.selectedGoal;
-      const prompt = this.confirm ?? { prompt: `Cancel ${goal.id}?`, yesHint: "y", noHint: "n/esc" };
-      return toDialogLines([
-        truncateLine(`Cancel goal ${goal.id}`, width),
-        truncateLine(prompt.prompt, width),
-        truncateLine(`Yes=${prompt.yesHint}, No=${prompt.noHint}`, width),
-        "",
-        truncateLine("y:confirm • n/esc:keep", width),
-      ], width);
+    const lines = this.renderCurrentView(Math.max(1, width - 2));
+
+    if (this.view !== "list") {
+      this.expandedLineCount = Math.max(this.expandedLineCount, lines.length);
     }
 
-    const contentWidth = Math.max(1, width - 2);
-    const lines = this.view === "list" ? this.renderList(contentWidth) : this.renderDetail(contentWidth);
-    if (this.view === "detail") {
-      this.detailLineCount = Math.max(this.detailLineCount, lines.length);
-      return toDialogLines(lines, width);
-    }
-
-    if (this.detailLineCount > 0 && lines.length < this.detailLineCount && width > 2) {
-      const bodyHeight = Math.max(0, this.detailLineCount - lines.length);
+    if (this.view === "list" && this.expandedLineCount > 0 && lines.length < this.expandedLineCount && width > 2) {
+      const bodyHeight = Math.max(0, this.expandedLineCount - lines.length);
       lines.push(...Array(bodyHeight).fill(""));
     }
 
     return toDialogLines(lines, width);
+  }
+
+  private renderCurrentView(width: number): string[] {
+    if (this.view === "list") return this.renderList(width);
+    if (this.view === "detail") return this.renderDetail(width);
+    if (this.view === "decisions") return this.renderDecisions(width);
+    if (this.view === "decision-answer") return this.renderDecisionAnswer(width);
+
+    return this.renderConfirm(width);
+  }
+
+  private renderConfirm(width: number): string[] {
+    const goal = this.selectedGoal;
+    if (!goal) return [""];
+    const prompt = this.confirm ?? { prompt: `Cancel ${goal.id}?`, yesHint: "y", noHint: "n/esc" };
+    return [
+      truncateLine(`Cancel goal ${goal.id}`, width),
+      truncateLine(prompt.prompt, width),
+      truncateLine(`Yes=${prompt.yesHint}, No=${prompt.noHint}`, width),
+      "",
+      truncateLine("y:confirm • n/esc:keep", width),
+    ];
   }
 
   handleInput(data: string): void {
@@ -367,59 +487,108 @@ export class GoalManagerDialog implements GoalManagerComponent {
       this.handleDetailInput(key);
       return;
     }
+    if (this.view === "decisions") {
+      this.handleDecisionsInput(key);
+      return;
+    }
+    if (this.view === "decision-answer") {
+      this.handleDecisionAnswerInput(key);
+      return;
+    }
     if (this.view === "confirm-cancel") {
       void this.handleConfirmInput(key);
-      return;
     }
   }
 
-  invalidate(): void {
-    // no cache retained
-  }
-
-  private async reloadGoals(): Promise<void> {
-    this.goals = await this.callbacks.loadGoals();
-    if (this.selectedIndex >= this.goals.length) this.selectedIndex = Math.max(0, this.goals.length - 1);
+  private async runSchedulerTick(): Promise<void> {
+    const result = await this.callbacks.runSchedulerTick();
+    if (!result.ok) {
+      this.callbacks.notify(result.reason ?? "Tick failed", "warning");
+      this.lastTickSummary = result.summary;
+    } else {
+      this.lastTickSummary = result.summary;
+    }
+    if (result.messages.length > 0 && !result.ok) {
+      for (const message of result.messages) {
+        this.callbacks.notify(message, "warning");
+      }
+    }
+    await this.reloadGoals();
     this.requestRender();
   }
 
-  private async reloadSelectedGoal(): Promise<void> {
-    const selectedId = this.selectedGoal?.id;
-    if (!selectedId) return;
-    const updated = await this.callbacks.loadGoal(selectedId);
-    if (!updated) {
-      this.view = "list";
-      await this.reloadGoals();
+  private async answerDecision(goalId: string, decision: DecisionRecord, choice: string): Promise<void> {
+    const result = await this.callbacks.answerDecision(goalId, decision.id, choice);
+    if (!result.ok) {
+      this.callbacks.notify(result.reason ?? "Could not answer decision", "warning");
+      this.requestRender();
       return;
     }
-    const index = this.goals.findIndex((goal) => goal.id === updated.id);
-    if (index >= 0) this.goals[index] = updated;
+
+    await this.reloadSelectedGoal();
+    const goal = this.selectedGoal;
+    const pending = goal ? getPendingDecisions(goal) : [];
+    if (pending.length > 0) {
+      this.view = "decisions";
+      this.syncDecisionSelection(pending);
+    } else {
+      this.view = "detail";
+    }
     this.requestRender();
   }
 
   private handleListInput(key: string): void {
+    const goals = this.visibleGoals();
+    this.syncSelection(goals);
+
     if (key === "up") {
-      if (!this.goals.length) return;
-      this.selectedIndex = (this.selectedIndex - 1 + this.goals.length) % this.goals.length;
+      if (!goals.length) return;
+      this.selectedIndex = (this.selectedIndex - 1 + goals.length) % goals.length;
+      this.selectedGoalId = goals[this.selectedIndex]?.id;
       this.requestRender();
       return;
     }
+
     if (key === "down") {
-      if (!this.goals.length) return;
-      this.selectedIndex = (this.selectedIndex + 1) % this.goals.length;
+      if (!goals.length) return;
+      this.selectedIndex = (this.selectedIndex + 1) % goals.length;
+      this.selectedGoalId = goals[this.selectedIndex]?.id;
       this.requestRender();
       return;
     }
+
     if (key === "enter") {
       if (!this.selectedGoal) return;
       this.view = "detail";
       this.requestRender();
       return;
     }
+
     if (key === "r") {
       void this.reloadGoals();
       return;
     }
+
+    if (key === "f") {
+      this.selectedFilterIndex = (this.selectedFilterIndex + 1) % STATE_FILTERS.length;
+      this.selectedGoalId = undefined;
+      this.syncSelection(this.visibleGoals());
+      this.requestRender();
+      return;
+    }
+
+    if (key === "s") {
+      this.selectedSortIndex = (this.selectedSortIndex + 1) % SORT_MODES.length;
+      this.syncSelection(this.visibleGoals());
+      this.requestRender();
+      return;
+    }
+
+    if (key === "t") {
+      void this.runSchedulerTick();
+      return;
+    }
+
     if (key === "escape" || key === "q" || key === "ctrl+c") {
       this.done();
       return;
@@ -440,10 +609,27 @@ export class GoalManagerDialog implements GoalManagerComponent {
       this.requestRender();
       return;
     }
+
     if (key === "r") {
       void this.reloadSelectedGoal();
       return;
     }
+
+    if (key === "d") {
+      if (countPendingDecisions(goal) > 0) {
+        this.selectedDecisionIndex = 0;
+        this.selectedDecisionId = undefined;
+        this.view = "decisions";
+        this.requestRender();
+      }
+      return;
+    }
+
+    if (key === "t") {
+      void this.runSchedulerTick();
+      return;
+    }
+
     if (key === "p") {
       if (availability.canPause) {
         void this.runAction(goal.id, this.callbacks.pauseGoal, "pause");
@@ -452,16 +638,99 @@ export class GoalManagerDialog implements GoalManagerComponent {
       }
       return;
     }
+
     if (key === "c" && availability.canCancel) {
       this.view = "confirm-cancel";
       this.confirm = { prompt: `Cancel ${goal.id}?`, yesHint: "y", noHint: "n/esc" };
       this.requestRender();
       return;
     }
+
     if (key === "n" && availability.canRunNow) {
       void this.runAction(goal.id, this.callbacks.runGoalNow, "run now");
       return;
     }
+  }
+
+  private handleDecisionsInput(key: string): void {
+    const goal = this.selectedGoal;
+    if (!goal) {
+      this.view = "detail";
+      this.requestRender();
+      return;
+    }
+
+    const pending = getPendingDecisions(goal);
+    this.syncDecisionSelection(pending);
+
+    if (key === "up") {
+      if (!pending.length) return;
+      this.selectedDecisionIndex = (this.selectedDecisionIndex - 1 + pending.length) % pending.length;
+      this.selectedDecisionId = pending[this.selectedDecisionIndex]?.id;
+      this.requestRender();
+      return;
+    }
+
+    if (key === "down") {
+      if (!pending.length) return;
+      this.selectedDecisionIndex = (this.selectedDecisionIndex + 1) % pending.length;
+      this.selectedDecisionId = pending[this.selectedDecisionIndex]?.id;
+      this.requestRender();
+      return;
+    }
+
+    if (key === "escape" || key === "q" || key === "b" || key === "ctrl+c") {
+      this.view = "detail";
+      this.requestRender();
+      return;
+    }
+
+    if (key === "r") {
+      void this.reloadSelectedGoal();
+      return;
+    }
+
+    if (key === "enter") {
+      if (!pending.length) return;
+      this.view = "decision-answer";
+      this.requestRender();
+      return;
+    }
+  }
+
+  private handleDecisionAnswerInput(key: string): void {
+    const goal = this.selectedGoal;
+    const pending = goal ? getPendingDecisions(goal) : [];
+    this.syncDecisionSelection(pending);
+    const decision = pending.at(this.selectedDecisionIndex);
+
+    if (!goal || !decision) {
+      this.view = "decisions";
+      this.requestRender();
+      return;
+    }
+
+    if (key === "escape" || key === "q" || key === "b" || key === "ctrl+c") {
+      this.view = "decisions";
+      this.requestRender();
+      return;
+    }
+
+    if (key === "r") {
+      void this.reloadSelectedGoal();
+      return;
+    }
+
+    const match = key.match(/^[1-9]$/);
+    if (!match) return;
+
+    const optionIndex = Number.parseInt(match[0], 10) - 1;
+    const choice = decision.options.at(optionIndex);
+    if (!choice) {
+      this.callbacks.notify("No such option", "warning");
+      return;
+    }
+    void this.answerDecision(goal.id, decision, choice.id);
   }
 
   private async handleConfirmInput(key: string): Promise<void> {
@@ -500,16 +769,135 @@ export class GoalManagerDialog implements GoalManagerComponent {
     await this.reloadSelectedGoal();
   }
 
+  private async reloadGoals(): Promise<void> {
+    this.goals = await this.callbacks.loadGoals();
+    this.syncSelection(this.visibleGoals());
+    this.requestRender();
+  }
+
+  private async reloadSelectedGoal(): Promise<void> {
+    const selectedId = this.selectedGoal?.id;
+    if (!selectedId) return;
+    const updated = await this.callbacks.loadGoal(selectedId);
+    if (!updated) {
+      this.view = "list";
+      await this.reloadGoals();
+      return;
+    }
+
+    const index = this.goals.findIndex((goal) => goal.id === updated.id);
+    if (index >= 0) this.goals[index] = updated;
+    this.syncSelection(this.visibleGoals());
+    this.requestRender();
+  }
+
+  private visibleGoals(): GoalRecord[] {
+    const filtered = this.stateFilter === "all" ? [...this.goals] : this.goals.filter((goal) => goal.state === this.stateFilter);
+    return this.sortGoals(filtered);
+  }
+
+  private get stateFilter(): StateFilter {
+    return STATE_FILTERS.at(this.selectedFilterIndex) ?? "all";
+  }
+
+  private get sortMode(): SortMode {
+    return SORT_MODES.at(this.selectedSortIndex) ?? "state";
+  }
+
+  private get sortModeLabel(): string {
+    if (this.sortMode === "state") return "state";
+    if (this.sortMode === "next") return "next";
+    return "id";
+  }
+
+  private syncSelection(visibleGoals: GoalRecord[]): void {
+    if (!visibleGoals.length) {
+      this.selectedIndex = 0;
+      this.selectedGoalId = undefined;
+      this.selectedDecisionIndex = 0;
+      this.selectedDecisionId = undefined;
+      return;
+    }
+
+    if (this.selectedGoalId) {
+      const current = visibleGoals.findIndex((goal) => goal.id === this.selectedGoalId);
+      if (current >= 0) {
+        this.selectedIndex = current;
+        return;
+      }
+    }
+
+    if (!Number.isFinite(this.selectedIndex) || this.selectedIndex < 0 || this.selectedIndex >= visibleGoals.length) {
+      this.selectedIndex = 0;
+    }
+
+    this.selectedGoalId = visibleGoals[this.selectedIndex]?.id;
+  }
+
+  private syncDecisionSelection(pendingDecisions: DecisionRecord[]): void {
+    if (!pendingDecisions.length) {
+      this.selectedDecisionIndex = 0;
+      this.selectedDecisionId = undefined;
+      return;
+    }
+
+    if (this.selectedDecisionId) {
+      const current = pendingDecisions.findIndex((decision) => decision.id === this.selectedDecisionId);
+      if (current >= 0) {
+        this.selectedDecisionIndex = current;
+        return;
+      }
+    }
+
+    if (this.selectedDecisionIndex < 0 || this.selectedDecisionIndex >= pendingDecisions.length) this.selectedDecisionIndex = 0;
+    this.selectedDecisionId = pendingDecisions[this.selectedDecisionIndex]?.id;
+  }
+
+  private sortGoals(goals: GoalRecord[]): GoalRecord[] {
+    return goals.sort((a, b) => {
+      if (this.sortMode === "state") {
+        const byState = STATE_SORT_ORDER[a.state] - STATE_SORT_ORDER[b.state];
+        if (byState !== 0) return byState;
+      }
+
+      if (this.sortMode === "next") {
+        const byNext = compareIsoDate(a.schedule.nextCheckAt, b.schedule.nextCheckAt);
+        if (byNext !== 0) return byNext;
+      }
+
+      const byId = compareStrings(a.id, b.id);
+      if (byId !== 0) return byId;
+
+      return compareStrings(goalTargetLine(a), goalTargetLine(b));
+    });
+  }
+
   private renderList(width: number): string[] {
     const lines: string[] = ["Goal manager", ""];
-    if (!this.goals.length) {
+    const goals = this.visibleGoals();
+    this.syncSelection(goals);
+
+    if (!goals.length) {
       lines.push(truncateLine("No goals found.", width));
-      lines.push(truncateLine("Press r to refresh, q/esc to close.", width));
+      lines.push(truncateLine(`Filter: ${this.stateFilter}`, width));
+      lines.push(truncateLine("Press r to refresh, f cycle filter, s sort, t tick, q/esc to close", width));
+      if (this.lastTickSummary) lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
+      return lines;
+    }
+
+    if (width < 48) {
+      lines.push(...this.renderCompactGoalList(goals, width));
+      lines.push("");
+      lines.push(truncateLine(`Filter: ${this.stateFilter} Sort: ${this.sortModeLabel}`, width));
+      lines.push(truncateLine("↑/↓ move  enter detail", width));
+      lines.push(truncateLine("f filter  s sort  r refresh  t tick", width));
+      lines.push(truncateLine("q/esc close", width));
+      if (this.lastTickSummary) lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
       return lines;
     }
 
     const headers = ["Sel", "ID", "State", "Target", "Next check", "Actions"];
-    const rows = this.goals.map((goal, index) => {
+    const rows = goals.map((goal, index) => {
       const hints = buildActionHints(goal);
       return [
         index === this.selectedIndex ? ">" : " ",
@@ -523,36 +911,173 @@ export class GoalManagerDialog implements GoalManagerComponent {
 
     lines.push("");
     lines.push(...renderRows(headers, rows, width, [5, 4, 3, 2, 1, 0], false));
-    lines.push("", truncateLine("↑/↓:move  enter:detail  r:refresh  q/esc:close", width));
+    lines.push("");
+    lines.push(truncateLine(`Filter: ${this.stateFilter}   Sort: ${this.sortModeLabel}`, width));
+    lines.push(truncateLine("↑/↓:move  enter:detail  f:cycle filter  s:cycle sort  r:refresh  t:tick  q/esc:close", width));
+    if (this.lastTickSummary) lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
+    return lines;
+  }
+
+  private renderCompactGoalList(goals: GoalRecord[], width: number): string[] {
+    const lines: string[] = [];
+    const selectedGoal = goals[this.selectedIndex];
+    const visible = selectedGoal ? [selectedGoal] : goals.slice(0, 1);
+
+    for (const goal of visible) {
+      const hints = buildActionHints(goal);
+      lines.push(truncateLine(`> ${goal.id}`, width));
+      lines.push(truncateLine(`  state: ${goal.state}`, width));
+      lines.push(...wrappedPrefixedLines("  target: ", goalTargetLine(goal), width));
+      lines.push(truncateLine(`  next: ${goal.schedule.nextCheckAt || "none"}`, width));
+      lines.push(truncateLine(`  actions: ${hints.length ? hints.join(",") : "(none)"}`, width));
+      if (goals.length > 1) lines.push(truncateLine(`  ${this.selectedIndex + 1}/${goals.length}`, width));
+    }
+
     return lines;
   }
 
   private renderDetail(width: number): string[] {
     const goal = this.selectedGoal;
     if (!goal) return this.renderList(width);
-    const hints = buildActionHints(goal);
-    const lines: string[] = ["", `Goal ${goal.id}`, ""]; 
 
-    const table = [
-      ["State", goal.state],
-      ["Type", goal.type],
-      ["Summary", fallbackText(goal.summary, "")],
-      ["Target", goalTargetLine(goal)],
-      ["Worktree", fallbackText(getGoalDisplayMetadata(goal).workspace, "none")],
-      ["Next check", fallbackText(goal.schedule.nextCheckAt, "none")],
-      ["Latest progress", fallbackText(goal.latestProgress, "none")],
-      ["Last run", fallbackText(goal.lastRunSummary ?? goal.runHistory.at(-1)?.summary, "none")],
-      ["Pending decisions", String(goal.pendingDecisions.filter((decision) => decision.status === "pending").length)],
-      ["Actions", hints.length ? hints.join(",") : "(none)"],
-    ];
+    if (width < 48) return this.renderCompactDetail(goal, width);
+
+    const hints = buildActionHints(goal);
+    const display = getGoalDisplayMetadata(goal);
+    const lines: string[] = ["", `Goal ${goal.id}`, ""];
+    const table = goalMetadataRows(goal);
+
+    table.push(["Actions", hints.length ? hints.join(",") : "(none)"]);
+    table.push(...runHistoryRows(goal.runHistory));
+
+    if (display.details?.length) {
+      for (const detail of display.details) {
+        table.push([detail.label, detail.value]);
+      }
+    }
 
     lines.push(...renderRows(["Property", "Value"], table, width, [1], true));
+    if (countPendingDecisions(goal) > 0) {
+      lines.push("");
+      lines.push(truncateLine(`Pending decisions: ${countPendingDecisions(goal)} (press d)`, width));
+    }
     lines.push("");
-    lines.push(truncateLine("b/esc back  r refresh  p:pause/resume  c:cancel  n:run now", width));
+    lines.push(truncateLine("b/esc back  d:pending decisions  r refresh  p:pause/resume  c:cancel  n:run now  t:tick", width));
+    if (this.lastTickSummary) lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
     return lines;
   }
 
+  private renderCompactDetail(goal: GoalRecord, width: number): string[] {
+    const hints = buildActionHints(goal);
+    const display = getGoalDisplayMetadata(goal);
+    const lines: string[] = ["", `Goal ${goal.id}`, truncateLine("b back • d decisions • r refresh", width), ""];
+    const rows = goalMetadataRows(goal);
+    rows.push(["Actions", hints.length ? hints.join(",") : "(none)"]);
+    rows.push(...runHistoryRows(goal.runHistory));
+
+    if (display.details?.length) {
+      for (const detail of display.details) rows.push([detail.label, detail.value]);
+    }
+
+    for (const [label, value] of rows) {
+      lines.push(...wrappedPrefixedLines(`${label}: `, value, width));
+    }
+
+    if (countPendingDecisions(goal) > 0) {
+      lines.push("");
+      lines.push(truncateLine(`Pending decisions: ${countPendingDecisions(goal)} (d)`, width));
+    }
+    lines.push("");
+    lines.push(truncateLine("b back  d decisions  r refresh", width));
+    lines.push(truncateLine("p pause/resume  c cancel", width));
+    lines.push(truncateLine("n run-now  t tick", width));
+    if (this.lastTickSummary) lines.push(truncateLine(`Last tick: ${this.lastTickSummary}`, width));
+    return lines;
+  }
+
+  private renderDecisions(width: number): string[] {
+    const goal = this.selectedGoal;
+    if (!goal) return this.renderList(width);
+
+    const pending = getPendingDecisions(goal);
+    const lines: string[] = ["", `Pending decisions for ${goal.id}`, ""];
+    this.syncDecisionSelection(pending);
+
+    if (!pending.length) {
+      lines.push("No pending decisions.");
+      lines.push("");
+      lines.push(truncateLine("b/back  r refresh", width));
+      return lines;
+    }
+
+    if (width < 48) {
+      const decision = pending[this.selectedDecisionIndex];
+      if (decision) {
+        lines.push(truncateLine(`> ${decision.id}`, width));
+        lines.push(truncateLine(`  ${decision.required ? "required" : "optional"}`, width));
+        lines.push(...wrappedPrefixedLines("  prompt: ", decision.prompt, width));
+        lines.push(truncateLine(`  ${this.selectedDecisionIndex + 1}/${pending.length}`, width));
+      }
+      lines.push("");
+      lines.push(truncateLine("↑/↓ move  enter answer", width));
+      lines.push(truncateLine("b back  r refresh", width));
+      return lines;
+    }
+
+    const rows = pending.map((decision, index) => [
+      index === this.selectedDecisionIndex ? ">" : " ",
+      decision.id,
+      decision.prompt,
+      decision.required ? "required" : "optional",
+    ]);
+
+    lines.push(...renderRows(["Sel", "Decision", "Prompt", "Required"], rows, width, [2, 1, 0], false));
+    lines.push("");
+    lines.push(truncateLine("↑/↓:move  enter:answer  b/back  r:refresh", width));
+    return lines;
+  }
+
+  private renderDecisionAnswer(width: number): string[] {
+    const goal = this.selectedGoal;
+    const pending = goal ? getPendingDecisions(goal) : [];
+    const decision = pending.at(this.selectedDecisionIndex);
+
+    if (!goal || !decision) {
+      this.view = "decisions";
+      return this.renderDecisions(width);
+    }
+
+    this.syncDecisionSelection(pending);
+
+    const lines: string[] = ["", `Decision ${decision.id}`, `Goal ${goal.id}`, ""];
+    lines.push(...wrappedPrefixedLines("Prompt: ", decision.prompt, width));
+    lines.push("");
+
+    if (!decision.options.length) {
+      lines.push("No choices available.");
+      lines.push("");
+      lines.push(truncateLine("b/back  r refresh", width));
+      return lines;
+    }
+
+    for (let index = 0; index < decision.options.length; index++) {
+      const option = decision.options[index];
+      if (!option) continue;
+      lines.push(truncateLine(`${index + 1}: ${option.id} ${option.label}`, width));
+    }
+
+    lines.push("");
+    lines.push(truncateLine("1-9: choose option  b/back  r/refresh", width));
+    return lines;
+  }
+
+  invalidate(): void {
+    // no cache retained
+  }
+
   private get selectedGoal(): GoalRecord | undefined {
-    return this.goals[this.selectedIndex];
+    const goals = this.visibleGoals();
+    this.syncSelection(goals);
+    return goals[this.selectedIndex];
   }
 }

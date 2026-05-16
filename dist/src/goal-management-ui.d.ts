@@ -1,5 +1,5 @@
 import type { GoalRecord } from "./types.js";
-export type GoalManagerView = "list" | "detail" | "confirm-cancel";
+export type GoalManagerView = "list" | "detail" | "decisions" | "decision-answer" | "confirm-cancel";
 export interface GoalManagerCallbacks {
     loadGoals(): Promise<GoalRecord[]>;
     loadGoal(goalId: string): Promise<GoalRecord | undefined>;
@@ -19,6 +19,16 @@ export interface GoalManagerCallbacks {
         ok: boolean;
         reason?: string;
     }>;
+    answerDecision(goalId: string, decisionId: string, choice: string): Promise<{
+        ok: boolean;
+        reason?: string;
+    }>;
+    runSchedulerTick(): Promise<{
+        ok: boolean;
+        summary: string;
+        reason?: string;
+        messages: string[];
+    }>;
     notify(message: string, type?: "info" | "warning" | "error"): void;
 }
 interface GoalManagerComponent {
@@ -33,20 +43,43 @@ export declare class GoalManagerDialog implements GoalManagerComponent {
     private goals;
     private view;
     private selectedIndex;
+    private selectedGoalId?;
+    private selectedFilterIndex;
+    private selectedSortIndex;
+    private selectedDecisionIndex;
+    private selectedDecisionId?;
     private confirm?;
-    private detailLineCount;
+    private expandedLineCount;
+    private lastTickSummary;
     constructor(initialGoals: GoalRecord[], callbacks: GoalManagerCallbacks, requestRender: () => void, done: () => void);
     render(width: number): string[];
+    private renderCurrentView;
+    private renderConfirm;
     handleInput(data: string): void;
-    invalidate(): void;
-    private reloadGoals;
-    private reloadSelectedGoal;
+    private runSchedulerTick;
+    private answerDecision;
     private handleListInput;
     private handleDetailInput;
+    private handleDecisionsInput;
+    private handleDecisionAnswerInput;
     private handleConfirmInput;
     private runAction;
+    private reloadGoals;
+    private reloadSelectedGoal;
+    private visibleGoals;
+    private get stateFilter();
+    private get sortMode();
+    private get sortModeLabel();
+    private syncSelection;
+    private syncDecisionSelection;
+    private sortGoals;
     private renderList;
+    private renderCompactGoalList;
     private renderDetail;
+    private renderCompactDetail;
+    private renderDecisions;
+    private renderDecisionAnswer;
+    invalidate(): void;
     private get selectedGoal();
 }
 export {};

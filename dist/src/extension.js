@@ -4,6 +4,7 @@ import { runGoalNow, schedulerTick } from "./scheduler.js";
 import { parseDaemonInterval } from "./cli.js";
 import { isTerminal } from "./policy.js";
 import { cancelGoal, pauseGoal, resumeGoal } from "./goal-operations.js";
+import { answerDecision } from "./decisions.js";
 import { GoalManagerDialog } from "./goal-management-ui.js";
 export function runSerializedSchedulerTick(state, tick, onError) {
     if (state.inFlight)
@@ -131,6 +132,29 @@ export default function goalRunnerExtension(pi) {
                     if (result.skipped > 0)
                         return { ok: false, reason: result.messages.at(-1) };
                     return { ok: true };
+                },
+                answerDecision: async (goalId, decisionId, choice) => {
+                    if (goalId === "") {
+                        return { ok: false, reason: "Missing goal id" };
+                    }
+                    try {
+                        await answerDecision(currentStore, decisionId, choice);
+                        return { ok: true };
+                    }
+                    catch (error) {
+                        return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+                    }
+                },
+                runSchedulerTick: async () => {
+                    try {
+                        const result = await schedulerTick(currentStore, { worker: { dryRun: process.env.PI_GOAL_RUNNER_DRY_RUN === "1" } });
+                        const summary = `Checked ${result.checked}, launched ${result.launched}, skipped ${result.skipped}, failures ${result.failures}`;
+                        return { ok: result.failures === 0, summary, reason: result.failures ? (result.messages.at(-1) ?? "tick failed") : undefined, messages: result.messages };
+                    }
+                    catch (error) {
+                        const reason = error instanceof Error ? error.message : String(error);
+                        return { ok: false, summary: `Checked 0, launched 0, skipped 0, failures 1`, reason, messages: [reason] };
+                    }
                 },
                 notify: (message, type) => {
                     ctx.ui.notify(message, type);

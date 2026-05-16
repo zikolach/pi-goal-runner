@@ -29,6 +29,8 @@ function createCallbacks(log: {
   resume?: () => void;
   cancel?: () => void;
   runNow?: () => void;
+  answerDecision?: () => void;
+  runSchedulerTick?: () => void;
 } = {}): {
   goalCalls: {
     list: number;
@@ -37,10 +39,12 @@ function createCallbacks(log: {
     resume: number;
     cancel: number;
     runNow: number;
+    answerDecision: number;
+    tick: number;
   };
   callbacks: GoalManagerCallbacks;
 } {
-  const calls = { list: 0, detail: 0, pause: 0, resume: 0, cancel: 0, runNow: 0 };
+  const calls = { list: 0, detail: 0, pause: 0, resume: 0, cancel: 0, runNow: 0, answerDecision: 0, tick: 0 };
   return {
     goalCalls: calls,
     callbacks: {
@@ -74,6 +78,16 @@ function createCallbacks(log: {
         log.runNow?.();
         return { ok: true };
       },
+      answerDecision: async () => {
+        calls.answerDecision++;
+        log.answerDecision?.();
+        return { ok: true };
+      },
+      runSchedulerTick: async () => {
+        calls.tick++;
+        log.runSchedulerTick?.();
+        return { ok: true, summary: "Checked 0, launched 0, skipped 0, failures 0", messages: [] };
+      },
       notify: () => {},
     },
   };
@@ -86,7 +100,7 @@ test("goal manager renders empty list view with close hint", () => {
   const dialog = new GoalManagerDialog([], callbacks, () => {}, () => {});
   const lines = dialog.render(40);
   assert.equal(lines.some((line) => line.includes("No goals found.")), true);
-  assert.equal(lines.some((line) => line.includes("Press r to refresh, q/esc to close.")), true);
+  assert.equal(lines.some((line) => line.includes("Press r to refresh")), true);
   assert.equal(lines.every((line) => line.length <= 40), true);
   assert.equal(lines[0].startsWith("╭") && lines[0].endsWith("╮"), true);
 });
@@ -188,6 +202,73 @@ test("goal manager supports empty-line width-safe rendering for long values", ()
   dialog.handleInput("enter");
   const lines = dialog.render(16);
   assert.equal(lines.every((line) => line.length <= 16), true);
+});
+
+test("goal manager uses compact readable list layout at narrow widths", () => {
+  const dialog = new GoalManagerDialog(
+    [makeGoal({ id: "very-long-goal-id-that-would-overflow", state: "needs_decision" })],
+    createCallbacks().callbacks,
+    () => {},
+    () => {},
+  );
+  const lines = dialog.render(32);
+  const body = lines.join("\n");
+  assert.equal(body.includes("state:"), true);
+  assert.equal(body.includes("target:"), true);
+  assert.equal(body.includes("q/esc close"), true);
+  assert.equal(body.includes("Sel"), false);
+  assert.equal(lines.every((line) => line.length <= 32), true);
+});
+
+test("goal manager uses compact readable detail layout at narrow widths", () => {
+  const dialog = new GoalManagerDialog(
+    [makeGoal({ id: "very-long-goal-id-that-would-overflow", state: "needs_decision", latestProgress: "first line\nsecond line with detail" })],
+    createCallbacks().callbacks,
+    () => {},
+    () => {},
+  );
+
+  dialog.handleInput("enter");
+  const lines = dialog.render(32);
+  const body = lines.join("\n");
+  assert.equal(body.includes("Property"), false);
+  assert.equal(body.includes("State:"), true);
+  assert.equal(body.includes("Latest progress:"), true);
+  assert.equal(body.includes("d decisions"), true);
+  assert.equal(lines.every((line) => line.length <= 32), true);
+});
+
+test("goal manager uses compact readable pending-decision layout at narrow widths", () => {
+  const now = "2026-01-01T00:00:00.000Z";
+  const dialog = new GoalManagerDialog(
+    [
+      makeGoal({
+        id: "goal-needs-decision",
+        state: "needs_decision",
+        pendingDecisions: [{
+          id: "decision-1",
+          goalId: "goal-needs-decision",
+          prompt: "Should the worker retry after applying the focused fix?",
+          options: [{ id: "yes", label: "Retry" }, { id: "no", label: "Stop" }],
+          createdAt: now,
+          status: "pending",
+          required: true,
+        }],
+      }),
+    ],
+    createCallbacks().callbacks,
+    () => {},
+    () => {},
+  );
+
+  dialog.handleInput("enter");
+  dialog.handleInput("d");
+  const lines = dialog.render(32);
+  const body = lines.join("\n");
+  assert.equal(body.includes("prompt:"), true);
+  assert.equal(body.includes("enter answer"), true);
+  assert.equal(body.includes("Sel"), false);
+  assert.equal(lines.every((line) => line.length <= 32), true);
 });
 
 test("goal manager renders list and detail views with expected fields and actions", () => {
