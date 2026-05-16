@@ -24,6 +24,61 @@ export function skipReason(goal, now = new Date()) {
         return `not due until ${goal.schedule.nextCheckAt}`;
     return undefined;
 }
+export async function runGoalNow(store, goalId, options = {}) {
+    const gh = options.gh ?? createGhExecutor();
+    const sink = options.notificationSink ?? createDefaultNotificationSink();
+    const now = options.now ?? new Date();
+    const result = { goalId, checked: 0, launched: 0, skipped: 0, failures: 0, messages: [] };
+    const lock = await acquireGoalLock(store.paths, goalId, schedulerLockStaleMs(options.worker));
+    if (!lock) {
+        result.skipped++;
+        result.messages.push(`${goalId}: goal is already being processed`);
+        return result;
+    }
+    let releaseLock = true;
+    try {
+        const goal = await store.get(goalId);
+        if (goal.state === "running") {
+            result.skipped++;
+            result.messages.push(`${goalId}: already running`);
+            return result;
+        }
+        const reason = skipReason(goal, now);
+        const restoreNextCheckAt = reason?.startsWith("not due until") ? goal.schedule.nextCheckAt : undefined;
+        if (reason && !restoreNextCheckAt) {
+            result.skipped++;
+            result.messages.push(`${goalId}: ${reason}`);
+            return result;
+        }
+        const checkResult = await checkGoal(store, goal, gh, sink, options);
+        result.checked = 1;
+        result.launched = checkResult.launched ? 1 : 0;
+        if (restoreNextCheckAt && !checkResult.launched) {
+            await store.update(goalId, (current) => ({ ...current, schedule: { ...current.schedule, nextCheckAt: restoreNextCheckAt } }), { updatedAt: now.toISOString() });
+        }
+        if (checkResult.workerDone) {
+            releaseLock = false;
+            result.workerDone = checkResult.workerDone;
+            releaseLockAfterWorker(checkResult.workerDone, lock.release);
+        }
+    }
+    catch (error) {
+        result.failures++;
+        const message = safeError(error);
+        await appendGoalEvent(store.paths, { type: "failure", goalId, timestamp: now.toISOString(), message, retryable: true });
+        await store.update(goalId, (current) => {
+            const backoff = increaseBackoff(current.schedule.backoff);
+            const updatedAt = now.toISOString();
+            return { ...current, state: "failed", updatedAt, latestProgress: message, schedule: { ...current.schedule, backoff, nextCheckAt: nextCheckAt(backoff, now) } };
+        }, { updatedAt: now.toISOString() });
+        result.messages.push(`${goalId}: ${message}`);
+    }
+    finally {
+        if (releaseLock)
+            await lock.release();
+    }
+    return result;
+}
 export async function schedulerTick(store, options = {}) {
     const gh = options.gh ?? createGhExecutor();
     const sink = options.notificationSink ?? createDefaultNotificationSink();

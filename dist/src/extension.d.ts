@@ -7,12 +7,25 @@ interface ExtensionAPI {
     }): void;
     on?(event: string, handler: (event: unknown, ctx: ExtensionContext) => Promise<void> | void): void;
 }
+type GoalManagerWidget = {
+    render(width: number): string[];
+    handleInput(data: string): void;
+    invalidate(): void;
+};
 interface ExtensionContext {
     cwd: string;
+    hasUI?: boolean;
     ui: {
         notify(message: string, type?: "info" | "success" | "warning" | "error"): void;
         setStatus?(key: string, value: string | undefined): void;
         setWidget?(key: string, lines: string[] | undefined): void;
+        custom?: (factory: (tui: {
+            requestRender(): void;
+        }, theme: unknown, _keybindings: unknown, done: (result: unknown) => void) => GoalManagerWidget | Promise<GoalManagerWidget>, options?: {
+            overlay?: boolean;
+            overlayOptions?: unknown;
+            onHandle?: (handle: unknown) => void;
+        }) => unknown | Promise<unknown>;
     };
 }
 interface ExtensionCommandContext extends ExtensionContext {

@@ -84,6 +84,90 @@ test("extension scheduler ticks are serialized", async () => {
   assert.deepEqual(errors, []);
 });
 
+test("goal ui and goals commands open interactive manager when UI is available", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-extension-interactive-"));
+  const previousStateDir = process.env.PI_GOAL_STATE_DIR;
+  const commands: Record<string, { handler: (args: string, ctx: any) => Promise<void> | void }> = {};
+  let customCalls = 0;
+  try {
+    process.env.PI_GOAL_STATE_DIR = dir;
+    const store = createGoalStore(dir);
+    await store.create({ id: "g1", type: "github_pr_review", state: "active", summary: "Interactive goal", schedule: defaultSchedule() });
+
+    goalRunnerExtension({
+      registerCommand(name, options) {
+        commands[name] = { handler: async (args, ctx) => options.handler(args, ctx) };
+      },
+      on: () => {},
+    });
+
+    assert.ok(commands.goal);
+    assert.ok(commands.goals);
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: true,
+      ui: {
+        notify: () => {},
+        setStatus: () => {},
+        setWidget: () => {},
+        custom: async (factory: (tui: { requestRender(): void }, _theme: unknown, _keybindings: unknown, done: (result: unknown) => void) => any) => {
+          customCalls += 1;
+          const component = factory({ requestRender: () => {} }, {}, {}, () => {});
+          if (component && typeof component === "object" && "invalidate" in component && typeof component.invalidate === "function") {
+            component.invalidate();
+          }
+          return component;
+        },
+      },
+    };
+
+    await commands.goal.handler("ui", ctx);
+    await commands.goals.handler("", ctx);
+
+    assert.equal(customCalls, 2);
+  } finally {
+    if (previousStateDir === undefined) delete process.env.PI_GOAL_STATE_DIR;
+    else process.env.PI_GOAL_STATE_DIR = previousStateDir;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("extension non-interactive sessions keep /goal ui read-only", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "goal-runner-extension-"));
+  const previousStateDir = process.env.PI_GOAL_STATE_DIR;
+  const commands: Record<string, { handler: (args: string, ctx: any) => Promise<void> | void }> = {};
+  const notifications: string[] = [];
+
+  try {
+    process.env.PI_GOAL_STATE_DIR = dir;
+    goalRunnerExtension({
+      registerCommand(name, options) {
+        commands[name] = { handler: async (args, ctx) => options.handler(args, ctx) };
+      },
+      on: () => {},
+    });
+
+    const ctx = {
+      cwd: process.cwd(),
+      hasUI: false,
+      ui: {
+        notify: (message: string) => {
+          notifications.push(message);
+        },
+        setStatus: () => {},
+        setWidget: () => {},
+      },
+    };
+
+    await commands.goal.handler("ui", ctx);
+    assert.deepEqual(notifications, ["Interactive goal management requires an interactive Pi session."]);
+  } finally {
+    if (previousStateDir === undefined) delete process.env.PI_GOAL_STATE_DIR;
+    else process.env.PI_GOAL_STATE_DIR = previousStateDir;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("daemon suggestion helper only recommends for goals the daemon can check", () => {
   assert.equal(shouldSuggestDaemon([]), false);
   assert.equal(

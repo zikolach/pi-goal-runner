@@ -24,9 +24,34 @@ The package registers a `/goal` Pi command and a `pi-goal-runner` CLI after buil
 /goal answer <decision-id> <choice>
 /goal watch-pr <owner/repo|url> <pr-number|url> [--quiet-ms N] [--validation "npm test"] [--auto-resolve]
 /goal tick
+/goal ui
+/goals
 ```
 
 `/goal watch-pr` validates GitHub authentication and PR metadata through `gh`. The scheduler observes review threads and checks before launching a worker.
+
+## Interactive Goal Manager
+
+`/goals` opens a modal, table-style goal manager in interactive Pi sessions. `/goal ui` is also supported as an alias.
+
+Keybindings:
+- `↑` / `↓`: navigate goal rows; scroll selected-goal detail content while in detail view
+- `←` / `→`: select and horizontally scroll table columns
+- `enter`: open selected goal detail
+- `q` / `esc`: close modal from list
+- `b` / `esc`: return to list from detail
+- `r`: refresh goals (list or selected detail)
+- `f`: cycle list state filters
+- `s`: sort the list by the selected table column
+- `d`: open pending decisions from a selected goal
+- `t`: trigger a scheduler tick
+- `p`: pause/resume selected goal
+- `c`: request cancel (requires confirmation)
+- `n`: run selected goal now
+- `y` / `enter`: confirm cancel
+- `n` / `esc`: abort cancel confirmation
+
+Action availability is state-aware (for example, running/cancelled/completed goals do not expose pause/resume/run actions that are invalid in those states).
 
 ## Architecture
 

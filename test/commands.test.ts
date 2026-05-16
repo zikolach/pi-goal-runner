@@ -52,6 +52,16 @@ test("decisions and answers validate choices", async () => {
   }
 });
 
+test("ui command has a non-interactive fallback for CLI callers", async () => {
+  const t = await tempStore();
+  try {
+    assert.match(await handleGoalCommand(t.store, "ui"), /requires an interactive Pi session/);
+    assert.match(await handleGoalCommandArgs(t.store, ["ui"]), /\/goals inside Pi/);
+  } finally {
+    await t.cleanup();
+  }
+});
+
 test("state-mutating commands respect active goal locks", async () => {
   const t = await tempStore();
   try {
